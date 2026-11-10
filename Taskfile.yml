@@ -1,0 +1,6 @@
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  ENV: '{{.ENV | default "local"}}'
