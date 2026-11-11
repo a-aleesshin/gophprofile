@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ func setS3Env(t *testing.T) {
 	t.Setenv("S3_ACCESS_KEY", "key")
 	t.Setenv("S3_SECRET_KEY", "secret")
 	t.Setenv("S3_BUCKET", "gophprofile")
+	t.Setenv("POSTGRES_DSN", "postgres://file:file@localhost:5432/file?sslmode=disable")
 }
 
 func TestLoad(t *testing.T) {
@@ -28,6 +30,10 @@ func TestLoad(t *testing.T) {
 	assert.Equal(t, "gophprofile", cfg.S3.Bucket)
 	assert.Equal(t, "us-east-1", cfg.S3.Region, "the default comes from the struct tag")
 	assert.False(t, cfg.S3.UseSSL)
+
+	assert.Equal(t, "postgres://file:file@localhost:5432/file?sslmode=disable", cfg.Postgres.DSN)
+	assert.Equal(t, int32(10), cfg.Postgres.MaxConns)
+	assert.Equal(t, time.Hour, cfg.Postgres.MaxConnLifetime, "durations come from the tag default")
 }
 
 func TestLoad_ReadsTheSectionPrefix(t *testing.T) {
@@ -59,6 +65,7 @@ func TestLoad_RequiresEveryMandatoryVariable(t *testing.T) {
 		"S3_ACCESS_KEY",
 		"S3_SECRET_KEY",
 		"S3_BUCKET",
+		"POSTGRES_DSN",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			setS3Env(t)
@@ -67,7 +74,6 @@ func TestLoad_RequiresEveryMandatoryVariable(t *testing.T) {
 			_, err := Load()
 			require.Error(t, err,
 				"a missing variable must fail at startup, not at the first request")
-			assert.Contains(t, err.Error(), "S3_")
 		})
 	}
 }

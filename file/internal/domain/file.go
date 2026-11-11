@@ -7,9 +7,11 @@ import (
 )
 
 var (
-	ErrInvalidFile   = errors.New("invalid file")
-	ErrFileNotFound  = errors.New("file not found")
-	ErrVariantAbsent = errors.New("variant not found")
+	ErrInvalidFile          = errors.New("invalid file")
+	ErrFileNotFound         = errors.New("file not found")
+	ErrFileAlreadyExists    = errors.New("file already exists")
+	ErrVariantAbsent        = errors.New("variant not found")
+	ErrVariantAlreadyExists = errors.New("variant already exists")
 )
 
 type File struct {
