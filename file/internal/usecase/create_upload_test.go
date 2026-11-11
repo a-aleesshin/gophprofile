@@ -100,9 +100,12 @@ func testUploadPolicy(t *testing.T) UploadPolicy {
 	png, err := domain.NewMimeType("image/png")
 	require.NoError(t, err)
 
+	allowed, err := domain.NewMimeSet(jpeg, png)
+	require.NoError(t, err)
+
 	return UploadPolicy{
 		MaxSizeBytes:      testPolicyLimit,
-		AllowedMimeTypes:  []domain.MimeType{jpeg, png},
+		AllowedMime:       allowed,
 		ContentTypePrefix: "image/",
 		TTL:               testPolicyTTL,
 	}

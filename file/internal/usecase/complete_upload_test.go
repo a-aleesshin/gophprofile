@@ -130,9 +130,12 @@ func testCompletePolicy(t *testing.T) CompletePolicy {
 	large, err := domain.NewVariantName("300x300")
 	require.NoError(t, err)
 
+	allowed, err := domain.NewMimeSet(jpeg)
+	require.NoError(t, err)
+
 	return CompletePolicy{
-		AllowedMimeTypes: []domain.MimeType{jpeg},
-		Variants:         []domain.VariantName{small, large},
+		AllowedMime: allowed,
+		Variants:    []domain.VariantName{small, large},
 	}
 }
 

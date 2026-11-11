@@ -18,8 +18,8 @@ var (
 )
 
 type CompletePolicy struct {
-	AllowedMimeTypes []domain.MimeType
-	Variants         []domain.VariantName
+	AllowedMime domain.MimeSet
+	Variants    []domain.VariantName
 }
 
 type ObjectInfo struct {
@@ -166,18 +166,10 @@ func (h *CompleteUploadHandler) Handle(
 		return CompleteUploadResult{}, fmt.Errorf("%w: %w", ErrObjectUnusable, err)
 	}
 
-	allowed := false
-	for _, candidate := range policy.AllowedMimeTypes {
-		if mimeType.Equal(candidate) {
-			allowed = true
-
-			break
-		}
-	}
-
-	if !allowed {
+	if !policy.AllowedMime.Contains(mimeType) {
 		return CompleteUploadResult{}, fmt.Errorf(
-			"%w: %q", ErrUnsupportedMimeType, mimeType.String(),
+			"%w: %q is not in %s",
+			ErrUnsupportedMimeType, mimeType.String(), policy.AllowedMime.String(),
 		)
 	}
 

@@ -18,7 +18,7 @@ var (
 
 type UploadPolicy struct {
 	MaxSizeBytes      int64
-	AllowedMimeTypes  []domain.MimeType
+	AllowedMime       domain.MimeSet
 	ContentTypePrefix string
 	TTL               time.Duration
 }
@@ -120,21 +120,11 @@ func (h *CreateUploadHandler) Handle(
 	upload, err := h.finder.ByIdempotencyKey(ctx, cmd.Namespace, cmd.IdempotencyKey)
 
 	if errors.Is(err, domain.ErrUploadNotFound) {
-		if !cmd.DeclaredMime.IsZero() {
-			allowed := false
-			for _, candidate := range policy.AllowedMimeTypes {
-				if cmd.DeclaredMime.Equal(candidate) {
-					allowed = true
-
-					break
-				}
-			}
-
-			if !allowed {
-				return CreateUploadResult{}, fmt.Errorf(
-					"%w: %q", ErrUnsupportedMimeType, cmd.DeclaredMime.String(),
-				)
-			}
+		if !cmd.DeclaredMime.IsZero() && !policy.AllowedMime.Contains(cmd.DeclaredMime) {
+			return CreateUploadResult{}, fmt.Errorf(
+				"%w: %q is not in %s",
+				ErrUnsupportedMimeType, cmd.DeclaredMime.String(), policy.AllowedMime.String(),
+			)
 		}
 
 		maxSizeBytes := policy.MaxSizeBytes
