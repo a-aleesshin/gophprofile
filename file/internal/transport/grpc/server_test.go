@@ -340,16 +340,20 @@ func TestGetFile(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, testFileID, response.GetId())
-	assert.Equal(t, "avatar", response.GetNamespace())
-	assert.Equal(t, "user-1", response.GetOwnerRef())
-	assert.Equal(t, int64(2048), response.GetSizeBytes())
-	assert.Equal(t, int32(800), response.GetWidth())
-	assert.Equal(t, filev1.FileStatus_FILE_STATUS_READY, response.GetStatus())
 
-	require.Len(t, response.GetVariants(), 1)
-	assert.Equal(t, "300x300", response.GetVariants()[0].GetName())
-	assert.Equal(t, "abc", response.GetVariants()[0].GetEtag())
+	found := response.GetFile()
+	require.NotNil(t, found)
+
+	assert.Equal(t, testFileID, found.GetId())
+	assert.Equal(t, "avatar", found.GetNamespace())
+	assert.Equal(t, "user-1", found.GetOwnerRef())
+	assert.Equal(t, int64(2048), found.GetSizeBytes())
+	assert.Equal(t, int32(800), found.GetWidth())
+	assert.Equal(t, filev1.FileStatus_FILE_STATUS_READY, found.GetStatus())
+
+	require.Len(t, found.GetVariants(), 1)
+	assert.Equal(t, "300x300", found.GetVariants()[0].GetName())
+	assert.Equal(t, "abc", found.GetVariants()[0].GetEtag())
 }
 
 func TestGetFiles(t *testing.T) {
@@ -445,11 +449,15 @@ func TestDeleteFile(t *testing.T) {
 	client := dial(t, handlers)
 
 	// Act
-	_, err := client.DeleteFile(t.Context(), &filev1.DeleteFileRequest{FileId: testFileID})
+	response, err := client.DeleteFile(t.Context(), &filev1.DeleteFileRequest{
+		FileId: testFileID,
+	})
 
 	// Assert
 	require.NoError(t, err)
 	assert.Equal(t, testFileID, deleter.cmd.FileID.String())
+	assert.Equal(t, filev1.FileStatus_FILE_STATUS_DELETING, response.GetStatus(),
+		"the caller needs to know whether the file went to deleting or was already gone")
 }
 
 func TestMapsUseCaseErrorsToCodes(t *testing.T) {

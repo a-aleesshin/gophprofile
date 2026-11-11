@@ -8,7 +8,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
@@ -168,7 +167,7 @@ func (s *Server) CompleteUpload(
 func (s *Server) GetFile(
 	ctx context.Context,
 	request *filev1.GetFileRequest,
-) (*filev1.File, error) {
+) (*filev1.GetFileResponse, error) {
 	fileID, err := domain.ParseFileID(request.GetFileId())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -179,7 +178,7 @@ func (s *Server) GetFile(
 		return nil, toStatus(err)
 	}
 
-	return toProtoFile(result.File, result.Variants), nil
+	return &filev1.GetFileResponse{File: toProtoFile(result.File, result.Variants)}, nil
 }
 
 func (s *Server) GetFiles(
@@ -250,17 +249,16 @@ func (s *Server) CreateAccessLink(
 func (s *Server) DeleteFile(
 	ctx context.Context,
 	request *filev1.DeleteFileRequest,
-) (*emptypb.Empty, error) {
+) (*filev1.DeleteFileResponse, error) {
 	fileID, err := domain.ParseFileID(request.GetFileId())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	if _, err := s.handlers.DeleteFile.Handle(ctx, usecase.DeleteFileCommand{
-		FileID: fileID,
-	}); err != nil {
+	result, err := s.handlers.DeleteFile.Handle(ctx, usecase.DeleteFileCommand{FileID: fileID})
+	if err != nil {
 		return nil, toStatus(err)
 	}
 
-	return &emptypb.Empty{}, nil
+	return &filev1.DeleteFileResponse{Status: toProtoStatus(result.Status)}, nil
 }

@@ -11,7 +11,6 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -34,10 +33,10 @@ const (
 type FileServiceClient interface {
 	CreateUpload(ctx context.Context, in *CreateUploadRequest, opts ...grpc.CallOption) (*CreateUploadResponse, error)
 	CompleteUpload(ctx context.Context, in *CompleteUploadRequest, opts ...grpc.CallOption) (*CompleteUploadResponse, error)
-	GetFile(ctx context.Context, in *GetFileRequest, opts ...grpc.CallOption) (*File, error)
+	GetFile(ctx context.Context, in *GetFileRequest, opts ...grpc.CallOption) (*GetFileResponse, error)
 	GetFiles(ctx context.Context, in *GetFilesRequest, opts ...grpc.CallOption) (*GetFilesResponse, error)
 	CreateAccessLink(ctx context.Context, in *CreateAccessLinkRequest, opts ...grpc.CallOption) (*CreateAccessLinkResponse, error)
-	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error)
 }
 
 type fileServiceClient struct {
@@ -68,9 +67,9 @@ func (c *fileServiceClient) CompleteUpload(ctx context.Context, in *CompleteUplo
 	return out, nil
 }
 
-func (c *fileServiceClient) GetFile(ctx context.Context, in *GetFileRequest, opts ...grpc.CallOption) (*File, error) {
+func (c *fileServiceClient) GetFile(ctx context.Context, in *GetFileRequest, opts ...grpc.CallOption) (*GetFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(File)
+	out := new(GetFileResponse)
 	err := c.cc.Invoke(ctx, FileService_GetFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -98,9 +97,9 @@ func (c *fileServiceClient) CreateAccessLink(ctx context.Context, in *CreateAcce
 	return out, nil
 }
 
-func (c *fileServiceClient) DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *fileServiceClient) DeleteFile(ctx context.Context, in *DeleteFileRequest, opts ...grpc.CallOption) (*DeleteFileResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(DeleteFileResponse)
 	err := c.cc.Invoke(ctx, FileService_DeleteFile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -114,10 +113,10 @@ func (c *fileServiceClient) DeleteFile(ctx context.Context, in *DeleteFileReques
 type FileServiceServer interface {
 	CreateUpload(context.Context, *CreateUploadRequest) (*CreateUploadResponse, error)
 	CompleteUpload(context.Context, *CompleteUploadRequest) (*CompleteUploadResponse, error)
-	GetFile(context.Context, *GetFileRequest) (*File, error)
+	GetFile(context.Context, *GetFileRequest) (*GetFileResponse, error)
 	GetFiles(context.Context, *GetFilesRequest) (*GetFilesResponse, error)
 	CreateAccessLink(context.Context, *CreateAccessLinkRequest) (*CreateAccessLinkResponse, error)
-	DeleteFile(context.Context, *DeleteFileRequest) (*emptypb.Empty, error)
+	DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error)
 	mustEmbedUnimplementedFileServiceServer()
 }
 
@@ -134,7 +133,7 @@ func (UnimplementedFileServiceServer) CreateUpload(context.Context, *CreateUploa
 func (UnimplementedFileServiceServer) CompleteUpload(context.Context, *CompleteUploadRequest) (*CompleteUploadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompleteUpload not implemented")
 }
-func (UnimplementedFileServiceServer) GetFile(context.Context, *GetFileRequest) (*File, error) {
+func (UnimplementedFileServiceServer) GetFile(context.Context, *GetFileRequest) (*GetFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetFile not implemented")
 }
 func (UnimplementedFileServiceServer) GetFiles(context.Context, *GetFilesRequest) (*GetFilesResponse, error) {
@@ -143,7 +142,7 @@ func (UnimplementedFileServiceServer) GetFiles(context.Context, *GetFilesRequest
 func (UnimplementedFileServiceServer) CreateAccessLink(context.Context, *CreateAccessLinkRequest) (*CreateAccessLinkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateAccessLink not implemented")
 }
-func (UnimplementedFileServiceServer) DeleteFile(context.Context, *DeleteFileRequest) (*emptypb.Empty, error) {
+func (UnimplementedFileServiceServer) DeleteFile(context.Context, *DeleteFileRequest) (*DeleteFileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteFile not implemented")
 }
 func (UnimplementedFileServiceServer) mustEmbedUnimplementedFileServiceServer() {}

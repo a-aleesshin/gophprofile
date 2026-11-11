@@ -2,7 +2,6 @@ syntax = "proto3";
 
 package gophprofile.file.v1;
 
-import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/a-aleesshin/gophprofile/gen/file/v1;filev1";
@@ -10,10 +9,10 @@ option go_package = "github.com/a-aleesshin/gophprofile/gen/file/v1;filev1";
 service FileService {
   rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
   rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
-  rpc GetFile(GetFileRequest) returns (File);
+  rpc GetFile(GetFileRequest) returns (GetFileResponse);
   rpc GetFiles(GetFilesRequest) returns (GetFilesResponse);
   rpc CreateAccessLink(CreateAccessLinkRequest) returns (CreateAccessLinkResponse);
-  rpc DeleteFile(DeleteFileRequest) returns (google.protobuf.Empty);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
 }
 
 enum FileStatus {
@@ -55,8 +54,16 @@ message GetFileRequest {
   string file_id = 1;
 }
 
+message GetFileResponse {
+  File file = 1;
+}
+
 message DeleteFileRequest {
   string file_id = 1;
+}
+
+message DeleteFileResponse {
+  FileStatus status = 1;
 }
 
 message GetFilesRequest {

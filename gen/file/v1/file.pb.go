@@ -9,7 +9,6 @@ package filev1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -376,6 +375,50 @@ func (x *GetFileRequest) GetFileId() string {
 	return ""
 }
 
+type GetFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	File          *File                  `protobuf:"bytes,1,opt,name=file,proto3" json:"file,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetFileResponse) Reset() {
+	*x = GetFileResponse{}
+	mi := &file_file_v1_file_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetFileResponse) ProtoMessage() {}
+
+func (x *GetFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_file_v1_file_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetFileResponse.ProtoReflect.Descriptor instead.
+func (*GetFileResponse) Descriptor() ([]byte, []int) {
+	return file_file_v1_file_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *GetFileResponse) GetFile() *File {
+	if x != nil {
+		return x.File
+	}
+	return nil
+}
+
 type DeleteFileRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
@@ -385,7 +428,7 @@ type DeleteFileRequest struct {
 
 func (x *DeleteFileRequest) Reset() {
 	*x = DeleteFileRequest{}
-	mi := &file_file_v1_file_proto_msgTypes[5]
+	mi := &file_file_v1_file_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -397,7 +440,7 @@ func (x *DeleteFileRequest) String() string {
 func (*DeleteFileRequest) ProtoMessage() {}
 
 func (x *DeleteFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[5]
+	mi := &file_file_v1_file_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -410,7 +453,7 @@ func (x *DeleteFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFileRequest.ProtoReflect.Descriptor instead.
 func (*DeleteFileRequest) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{5}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *DeleteFileRequest) GetFileId() string {
@@ -418,6 +461,50 @@ func (x *DeleteFileRequest) GetFileId() string {
 		return x.FileId
 	}
 	return ""
+}
+
+type DeleteFileResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        FileStatus             `protobuf:"varint,1,opt,name=status,proto3,enum=gophprofile.file.v1.FileStatus" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteFileResponse) Reset() {
+	*x = DeleteFileResponse{}
+	mi := &file_file_v1_file_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteFileResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteFileResponse) ProtoMessage() {}
+
+func (x *DeleteFileResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_file_v1_file_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteFileResponse.ProtoReflect.Descriptor instead.
+func (*DeleteFileResponse) Descriptor() ([]byte, []int) {
+	return file_file_v1_file_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DeleteFileResponse) GetStatus() FileStatus {
+	if x != nil {
+		return x.Status
+	}
+	return FileStatus_FILE_STATUS_UNSPECIFIED
 }
 
 type GetFilesRequest struct {
@@ -429,7 +516,7 @@ type GetFilesRequest struct {
 
 func (x *GetFilesRequest) Reset() {
 	*x = GetFilesRequest{}
-	mi := &file_file_v1_file_proto_msgTypes[6]
+	mi := &file_file_v1_file_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -441,7 +528,7 @@ func (x *GetFilesRequest) String() string {
 func (*GetFilesRequest) ProtoMessage() {}
 
 func (x *GetFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[6]
+	mi := &file_file_v1_file_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -454,7 +541,7 @@ func (x *GetFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFilesRequest.ProtoReflect.Descriptor instead.
 func (*GetFilesRequest) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{6}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetFilesRequest) GetFileIds() []string {
@@ -473,7 +560,7 @@ type GetFilesResponse struct {
 
 func (x *GetFilesResponse) Reset() {
 	*x = GetFilesResponse{}
-	mi := &file_file_v1_file_proto_msgTypes[7]
+	mi := &file_file_v1_file_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -485,7 +572,7 @@ func (x *GetFilesResponse) String() string {
 func (*GetFilesResponse) ProtoMessage() {}
 
 func (x *GetFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[7]
+	mi := &file_file_v1_file_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -498,7 +585,7 @@ func (x *GetFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFilesResponse.ProtoReflect.Descriptor instead.
 func (*GetFilesResponse) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{7}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetFilesResponse) GetFiles() []*File {
@@ -519,7 +606,7 @@ type CreateAccessLinkRequest struct {
 
 func (x *CreateAccessLinkRequest) Reset() {
 	*x = CreateAccessLinkRequest{}
-	mi := &file_file_v1_file_proto_msgTypes[8]
+	mi := &file_file_v1_file_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -531,7 +618,7 @@ func (x *CreateAccessLinkRequest) String() string {
 func (*CreateAccessLinkRequest) ProtoMessage() {}
 
 func (x *CreateAccessLinkRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[8]
+	mi := &file_file_v1_file_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -544,7 +631,7 @@ func (x *CreateAccessLinkRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccessLinkRequest.ProtoReflect.Descriptor instead.
 func (*CreateAccessLinkRequest) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{8}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateAccessLinkRequest) GetFileId() string {
@@ -578,7 +665,7 @@ type CreateAccessLinkResponse struct {
 
 func (x *CreateAccessLinkResponse) Reset() {
 	*x = CreateAccessLinkResponse{}
-	mi := &file_file_v1_file_proto_msgTypes[9]
+	mi := &file_file_v1_file_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -590,7 +677,7 @@ func (x *CreateAccessLinkResponse) String() string {
 func (*CreateAccessLinkResponse) ProtoMessage() {}
 
 func (x *CreateAccessLinkResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[9]
+	mi := &file_file_v1_file_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -603,7 +690,7 @@ func (x *CreateAccessLinkResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccessLinkResponse.ProtoReflect.Descriptor instead.
 func (*CreateAccessLinkResponse) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{9}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CreateAccessLinkResponse) GetUrl() string {
@@ -635,7 +722,7 @@ type Variant struct {
 
 func (x *Variant) Reset() {
 	*x = Variant{}
-	mi := &file_file_v1_file_proto_msgTypes[10]
+	mi := &file_file_v1_file_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -647,7 +734,7 @@ func (x *Variant) String() string {
 func (*Variant) ProtoMessage() {}
 
 func (x *Variant) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[10]
+	mi := &file_file_v1_file_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -660,7 +747,7 @@ func (x *Variant) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Variant.ProtoReflect.Descriptor instead.
 func (*Variant) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{10}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Variant) GetName() string {
@@ -731,7 +818,7 @@ type File struct {
 
 func (x *File) Reset() {
 	*x = File{}
-	mi := &file_file_v1_file_proto_msgTypes[11]
+	mi := &file_file_v1_file_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +830,7 @@ func (x *File) String() string {
 func (*File) ProtoMessage() {}
 
 func (x *File) ProtoReflect() protoreflect.Message {
-	mi := &file_file_v1_file_proto_msgTypes[11]
+	mi := &file_file_v1_file_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +843,7 @@ func (x *File) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use File.ProtoReflect.Descriptor instead.
 func (*File) Descriptor() ([]byte, []int) {
-	return file_file_v1_file_proto_rawDescGZIP(), []int{11}
+	return file_file_v1_file_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *File) GetId() string {
@@ -840,7 +927,7 @@ var File_file_v1_file_proto protoreflect.FileDescriptor
 
 const file_file_v1_file_proto_rawDesc = "" +
 	"\n" +
-	"\x12file/v1/file.proto\x12\x13gophprofile.file.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe9\x01\n" +
+	"\x12file/v1/file.proto\x12\x13gophprofile.file.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xe9\x01\n" +
 	"\x13CreateUploadRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x1b\n" +
 	"\towner_ref\x18\x02 \x01(\tR\bownerRef\x12#\n" +
@@ -863,9 +950,13 @@ const file_file_v1_file_proto_rawDesc = "" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\x127\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x1f.gophprofile.file.v1.FileStatusR\x06status\")\n" +
 	"\x0eGetFileRequest\x12\x17\n" +
-	"\afile_id\x18\x01 \x01(\tR\x06fileId\",\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\"@\n" +
+	"\x0fGetFileResponse\x12-\n" +
+	"\x04file\x18\x01 \x01(\v2\x19.gophprofile.file.v1.FileR\x04file\",\n" +
 	"\x11DeleteFileRequest\x12\x17\n" +
-	"\afile_id\x18\x01 \x01(\tR\x06fileId\",\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\"M\n" +
+	"\x12DeleteFileResponse\x127\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x1f.gophprofile.file.v1.FileStatusR\x06status\",\n" +
 	"\x0fGetFilesRequest\x12\x19\n" +
 	"\bfile_ids\x18\x01 \x03(\tR\afileIds\"C\n" +
 	"\x10GetFilesResponse\x12/\n" +
@@ -911,15 +1002,15 @@ const file_file_v1_file_proto_rawDesc = "" +
 	"\x11FILE_STATUS_READY\x10\x03\x12\x18\n" +
 	"\x14FILE_STATUS_REJECTED\x10\x04\x12\x18\n" +
 	"\x14FILE_STATUS_DELETING\x10\x05\x12\x17\n" +
-	"\x13FILE_STATUS_DELETED\x10\x062\xc0\x04\n" +
+	"\x13FILE_STATUS_DELETED\x10\x062\xdc\x04\n" +
 	"\vFileService\x12c\n" +
 	"\fCreateUpload\x12(.gophprofile.file.v1.CreateUploadRequest\x1a).gophprofile.file.v1.CreateUploadResponse\x12i\n" +
-	"\x0eCompleteUpload\x12*.gophprofile.file.v1.CompleteUploadRequest\x1a+.gophprofile.file.v1.CompleteUploadResponse\x12I\n" +
-	"\aGetFile\x12#.gophprofile.file.v1.GetFileRequest\x1a\x19.gophprofile.file.v1.File\x12W\n" +
+	"\x0eCompleteUpload\x12*.gophprofile.file.v1.CompleteUploadRequest\x1a+.gophprofile.file.v1.CompleteUploadResponse\x12T\n" +
+	"\aGetFile\x12#.gophprofile.file.v1.GetFileRequest\x1a$.gophprofile.file.v1.GetFileResponse\x12W\n" +
 	"\bGetFiles\x12$.gophprofile.file.v1.GetFilesRequest\x1a%.gophprofile.file.v1.GetFilesResponse\x12o\n" +
-	"\x10CreateAccessLink\x12,.gophprofile.file.v1.CreateAccessLinkRequest\x1a-.gophprofile.file.v1.CreateAccessLinkResponse\x12L\n" +
+	"\x10CreateAccessLink\x12,.gophprofile.file.v1.CreateAccessLinkRequest\x1a-.gophprofile.file.v1.CreateAccessLinkResponse\x12]\n" +
 	"\n" +
-	"DeleteFile\x12&.gophprofile.file.v1.DeleteFileRequest\x1a\x16.google.protobuf.EmptyB7Z5github.com/a-aleesshin/gophprofile/gen/file/v1;filev1b\x06proto3"
+	"DeleteFile\x12&.gophprofile.file.v1.DeleteFileRequest\x1a'.gophprofile.file.v1.DeleteFileResponseB7Z5github.com/a-aleesshin/gophprofile/gen/file/v1;filev1b\x06proto3"
 
 var (
 	file_file_v1_file_proto_rawDescOnce sync.Once
@@ -934,7 +1025,7 @@ func file_file_v1_file_proto_rawDescGZIP() []byte {
 }
 
 var file_file_v1_file_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_file_v1_file_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_file_v1_file_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_file_v1_file_proto_goTypes = []any{
 	(FileStatus)(0),                  // 0: gophprofile.file.v1.FileStatus
 	(*CreateUploadRequest)(nil),      // 1: gophprofile.file.v1.CreateUploadRequest
@@ -942,43 +1033,46 @@ var file_file_v1_file_proto_goTypes = []any{
 	(*CompleteUploadRequest)(nil),    // 3: gophprofile.file.v1.CompleteUploadRequest
 	(*CompleteUploadResponse)(nil),   // 4: gophprofile.file.v1.CompleteUploadResponse
 	(*GetFileRequest)(nil),           // 5: gophprofile.file.v1.GetFileRequest
-	(*DeleteFileRequest)(nil),        // 6: gophprofile.file.v1.DeleteFileRequest
-	(*GetFilesRequest)(nil),          // 7: gophprofile.file.v1.GetFilesRequest
-	(*GetFilesResponse)(nil),         // 8: gophprofile.file.v1.GetFilesResponse
-	(*CreateAccessLinkRequest)(nil),  // 9: gophprofile.file.v1.CreateAccessLinkRequest
-	(*CreateAccessLinkResponse)(nil), // 10: gophprofile.file.v1.CreateAccessLinkResponse
-	(*Variant)(nil),                  // 11: gophprofile.file.v1.Variant
-	(*File)(nil),                     // 12: gophprofile.file.v1.File
-	nil,                              // 13: gophprofile.file.v1.CreateUploadResponse.FieldsEntry
-	(*timestamppb.Timestamp)(nil),    // 14: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),            // 15: google.protobuf.Empty
+	(*GetFileResponse)(nil),          // 6: gophprofile.file.v1.GetFileResponse
+	(*DeleteFileRequest)(nil),        // 7: gophprofile.file.v1.DeleteFileRequest
+	(*DeleteFileResponse)(nil),       // 8: gophprofile.file.v1.DeleteFileResponse
+	(*GetFilesRequest)(nil),          // 9: gophprofile.file.v1.GetFilesRequest
+	(*GetFilesResponse)(nil),         // 10: gophprofile.file.v1.GetFilesResponse
+	(*CreateAccessLinkRequest)(nil),  // 11: gophprofile.file.v1.CreateAccessLinkRequest
+	(*CreateAccessLinkResponse)(nil), // 12: gophprofile.file.v1.CreateAccessLinkResponse
+	(*Variant)(nil),                  // 13: gophprofile.file.v1.Variant
+	(*File)(nil),                     // 14: gophprofile.file.v1.File
+	nil,                              // 15: gophprofile.file.v1.CreateUploadResponse.FieldsEntry
+	(*timestamppb.Timestamp)(nil),    // 16: google.protobuf.Timestamp
 }
 var file_file_v1_file_proto_depIdxs = []int32{
-	13, // 0: gophprofile.file.v1.CreateUploadResponse.fields:type_name -> gophprofile.file.v1.CreateUploadResponse.FieldsEntry
-	14, // 1: gophprofile.file.v1.CreateUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	15, // 0: gophprofile.file.v1.CreateUploadResponse.fields:type_name -> gophprofile.file.v1.CreateUploadResponse.FieldsEntry
+	16, // 1: gophprofile.file.v1.CreateUploadResponse.expires_at:type_name -> google.protobuf.Timestamp
 	0,  // 2: gophprofile.file.v1.CompleteUploadResponse.status:type_name -> gophprofile.file.v1.FileStatus
-	12, // 3: gophprofile.file.v1.GetFilesResponse.files:type_name -> gophprofile.file.v1.File
-	14, // 4: gophprofile.file.v1.CreateAccessLinkResponse.expires_at:type_name -> google.protobuf.Timestamp
-	0,  // 5: gophprofile.file.v1.File.status:type_name -> gophprofile.file.v1.FileStatus
-	11, // 6: gophprofile.file.v1.File.variants:type_name -> gophprofile.file.v1.Variant
-	14, // 7: gophprofile.file.v1.File.created_at:type_name -> google.protobuf.Timestamp
-	1,  // 8: gophprofile.file.v1.FileService.CreateUpload:input_type -> gophprofile.file.v1.CreateUploadRequest
-	3,  // 9: gophprofile.file.v1.FileService.CompleteUpload:input_type -> gophprofile.file.v1.CompleteUploadRequest
-	5,  // 10: gophprofile.file.v1.FileService.GetFile:input_type -> gophprofile.file.v1.GetFileRequest
-	7,  // 11: gophprofile.file.v1.FileService.GetFiles:input_type -> gophprofile.file.v1.GetFilesRequest
-	9,  // 12: gophprofile.file.v1.FileService.CreateAccessLink:input_type -> gophprofile.file.v1.CreateAccessLinkRequest
-	6,  // 13: gophprofile.file.v1.FileService.DeleteFile:input_type -> gophprofile.file.v1.DeleteFileRequest
-	2,  // 14: gophprofile.file.v1.FileService.CreateUpload:output_type -> gophprofile.file.v1.CreateUploadResponse
-	4,  // 15: gophprofile.file.v1.FileService.CompleteUpload:output_type -> gophprofile.file.v1.CompleteUploadResponse
-	12, // 16: gophprofile.file.v1.FileService.GetFile:output_type -> gophprofile.file.v1.File
-	8,  // 17: gophprofile.file.v1.FileService.GetFiles:output_type -> gophprofile.file.v1.GetFilesResponse
-	10, // 18: gophprofile.file.v1.FileService.CreateAccessLink:output_type -> gophprofile.file.v1.CreateAccessLinkResponse
-	15, // 19: gophprofile.file.v1.FileService.DeleteFile:output_type -> google.protobuf.Empty
-	14, // [14:20] is the sub-list for method output_type
-	8,  // [8:14] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	14, // 3: gophprofile.file.v1.GetFileResponse.file:type_name -> gophprofile.file.v1.File
+	0,  // 4: gophprofile.file.v1.DeleteFileResponse.status:type_name -> gophprofile.file.v1.FileStatus
+	14, // 5: gophprofile.file.v1.GetFilesResponse.files:type_name -> gophprofile.file.v1.File
+	16, // 6: gophprofile.file.v1.CreateAccessLinkResponse.expires_at:type_name -> google.protobuf.Timestamp
+	0,  // 7: gophprofile.file.v1.File.status:type_name -> gophprofile.file.v1.FileStatus
+	13, // 8: gophprofile.file.v1.File.variants:type_name -> gophprofile.file.v1.Variant
+	16, // 9: gophprofile.file.v1.File.created_at:type_name -> google.protobuf.Timestamp
+	1,  // 10: gophprofile.file.v1.FileService.CreateUpload:input_type -> gophprofile.file.v1.CreateUploadRequest
+	3,  // 11: gophprofile.file.v1.FileService.CompleteUpload:input_type -> gophprofile.file.v1.CompleteUploadRequest
+	5,  // 12: gophprofile.file.v1.FileService.GetFile:input_type -> gophprofile.file.v1.GetFileRequest
+	9,  // 13: gophprofile.file.v1.FileService.GetFiles:input_type -> gophprofile.file.v1.GetFilesRequest
+	11, // 14: gophprofile.file.v1.FileService.CreateAccessLink:input_type -> gophprofile.file.v1.CreateAccessLinkRequest
+	7,  // 15: gophprofile.file.v1.FileService.DeleteFile:input_type -> gophprofile.file.v1.DeleteFileRequest
+	2,  // 16: gophprofile.file.v1.FileService.CreateUpload:output_type -> gophprofile.file.v1.CreateUploadResponse
+	4,  // 17: gophprofile.file.v1.FileService.CompleteUpload:output_type -> gophprofile.file.v1.CompleteUploadResponse
+	6,  // 18: gophprofile.file.v1.FileService.GetFile:output_type -> gophprofile.file.v1.GetFileResponse
+	10, // 19: gophprofile.file.v1.FileService.GetFiles:output_type -> gophprofile.file.v1.GetFilesResponse
+	12, // 20: gophprofile.file.v1.FileService.CreateAccessLink:output_type -> gophprofile.file.v1.CreateAccessLinkResponse
+	8,  // 21: gophprofile.file.v1.FileService.DeleteFile:output_type -> gophprofile.file.v1.DeleteFileResponse
+	16, // [16:22] is the sub-list for method output_type
+	10, // [10:16] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_file_v1_file_proto_init() }
@@ -992,7 +1086,7 @@ func file_file_v1_file_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_file_v1_file_proto_rawDesc), len(file_file_v1_file_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
