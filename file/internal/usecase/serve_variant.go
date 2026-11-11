@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -9,7 +10,13 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 )
 
+var (
+	ErrSignatureRequired  = errors.New("this namespace is served by signed link only")
+	ErrStorageUnavailable = errors.New("object storage did not answer")
+)
+
 type ServingPolicy struct {
+	Signed       bool
 	CacheControl string
 	Disposition  string
 	AcceptRanges bool
@@ -46,6 +53,7 @@ type ServeVariantCommand struct {
 	Variant     domain.VariantName
 	Ext         domain.Extension
 	IfNoneMatch string
+	Signed      bool
 }
 
 type ServeVariantResult struct {
@@ -105,6 +113,12 @@ func (h *ServeVariantHandler) Handle(
 		)
 	}
 
+	if policy.Signed && !cmd.Signed {
+		return ServeVariantResult{}, fmt.Errorf(
+			"%w: namespace %q", ErrSignatureRequired, view.Namespace.String(),
+		)
+	}
+
 	result := ServeVariantResult{
 		MimeType:     view.MimeType,
 		SizeBytes:    view.SizeBytes,
@@ -123,7 +137,7 @@ func (h *ServeVariantHandler) Handle(
 
 	body, err := h.objects.Get(ctx, view.Location)
 	if err != nil {
-		return ServeVariantResult{}, err
+		return ServeVariantResult{}, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 
 	result.Body = body

@@ -333,6 +333,7 @@ func (r *Registry) ServingPolicy(namespace domain.Namespace) (usecase.ServingPol
 	}
 
 	return usecase.ServingPolicy{
+		Signed:       found.Access == AccessSigned,
 		CacheControl: found.CacheControl,
 		Disposition:  found.Disposition,
 		AcceptRanges: found.AcceptRanges,
