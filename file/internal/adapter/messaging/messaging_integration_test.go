@@ -162,7 +162,9 @@ func TestPublisher_EnqueueProcessFileGoesToRabbit(t *testing.T) {
 	assert.Equal(t, outbox.TransportRabbit, found.Transport,
 		"a command carries an instruction, so it goes to the queue with acks and retries")
 	assert.Equal(t, DestinationProcessFile, found.Destination)
-	assert.Nil(t, found.PartitionKey, "a routing key needs no partition key")
+	require.NotNil(t, found.PartitionKey)
+	assert.Equal(t, fileID.String(), *found.PartitionKey,
+		"rabbit ignores it for routing, but the relay orders commands about one file by it")
 	assert.Nil(t, found.PublishedAt, "the relay has not seen it yet")
 	assert.Zero(t, found.Attempts)
 

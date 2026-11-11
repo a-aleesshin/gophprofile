@@ -81,9 +81,10 @@ func (p *Publisher) EnqueueProcessFile(
 	}
 
 	return p.writer.Write(ctx, outbox.Message{
-		Transport:   outbox.TransportRabbit,
-		Destination: DestinationProcessFile,
-		Type:        TypeProcessFile,
+		Transport:    outbox.TransportRabbit,
+		Destination:  DestinationProcessFile,
+		PartitionKey: cmd.FileID.String(),
+		Type:         TypeProcessFile,
 		Data: processFileData{
 			FileID:     cmd.FileID.String(),
 			StagingKey: cmd.StagingKey.String(),
@@ -102,10 +103,11 @@ func (p *Publisher) EnqueueDeleteObjects(
 	}
 
 	return p.writer.Write(ctx, outbox.Message{
-		Transport:   outbox.TransportRabbit,
-		Destination: DestinationDeleteObjects,
-		Type:        TypeDeleteObjects,
-		Data:        deleteObjectsData{FileID: cmd.FileID.String(), StorageKeys: keys},
+		Transport:    outbox.TransportRabbit,
+		Destination:  DestinationDeleteObjects,
+		PartitionKey: cmd.FileID.String(),
+		Type:         TypeDeleteObjects,
+		Data:         deleteObjectsData{FileID: cmd.FileID.String(), StorageKeys: keys},
 	})
 }
 
