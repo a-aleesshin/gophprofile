@@ -20,6 +20,8 @@ func setS3Env(t *testing.T) {
 	t.Setenv("POLICIES_PATH", "configs/policies.yaml")
 	t.Setenv("LINK_PUBLIC_BASE", "https://domain.com")
 	t.Setenv("LINK_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("RABBIT_URL", "amqp://guest:guest@rabbitmq:5672/")
+	t.Setenv("KAFKA_BROKERS", "kafka:9092")
 }
 
 func TestLoad(t *testing.T) {
@@ -43,6 +45,16 @@ func TestLoad(t *testing.T) {
 	assert.Equal(t, "https://domain.com", cfg.Links.PublicBase)
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", cfg.Links.Secret)
 	assert.Empty(t, cfg.Links.PreviousSecret, "rotation is off until a second secret is set")
+
+	assert.Equal(t, "amqp://guest:guest@rabbitmq:5672/", cfg.Rabbit.URL)
+	assert.Equal(t, "gophprofile.commands", cfg.Rabbit.Exchange)
+	assert.Equal(t, 3, cfg.Rabbit.Prefetch)
+	assert.Equal(t, []time.Duration{
+		time.Second, 4 * time.Second, 16 * time.Second, 64 * time.Second, 256 * time.Second,
+	}, cfg.Rabbit.Ladder, "the retry ladder comes from the struct tag")
+
+	assert.Equal(t, []string{"kafka:9092"}, cfg.Kafka.Brokers)
+	assert.Equal(t, "gophprofile.file.v1", cfg.Kafka.Topic)
 }
 
 func TestLoad_ReadsTheSectionPrefix(t *testing.T) {
@@ -78,6 +90,8 @@ func TestLoad_RequiresEveryMandatoryVariable(t *testing.T) {
 		"POLICIES_PATH",
 		"LINK_PUBLIC_BASE",
 		"LINK_SECRET",
+		"RABBIT_URL",
+		"KAFKA_BROKERS",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			setS3Env(t)
