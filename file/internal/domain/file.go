@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-var ErrInvalidFile = errors.New("invalid file")
+var (
+	ErrInvalidFile   = errors.New("invalid file")
+	ErrFileNotFound  = errors.New("file not found")
+	ErrVariantAbsent = errors.New("variant not found")
+)
 
 type File struct {
 	id      FileID

@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-var ErrInvalidUpload = errors.New("invalid upload")
+var (
+	ErrInvalidUpload       = errors.New("invalid upload")
+	ErrUploadNotFound      = errors.New("upload not found")
+	ErrUploadAlreadyExists = errors.New("upload already exists")
+)
 
 type Upload struct {
 	id      UploadID
