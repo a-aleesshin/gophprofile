@@ -24,6 +24,15 @@ func testMime(t *testing.T, raw string) domain.MimeType {
 	return value
 }
 
+func loadTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+
+	registry, err := Load(shippedPolicies)
+	require.NoError(t, err)
+
+	return registry
+}
+
 func testNamespace(t *testing.T, name string) domain.Namespace {
 	t.Helper()
 
@@ -191,6 +200,42 @@ namespaces:
     allowed_mime: []
     cache_control: "x"
 `},
+		{name: "image without a pixel cap", body: `
+namespaces:
+  avatar:
+    access: public
+    validator: image
+    upload_ttl: 15m
+    max_size_bytes: 1
+    allowed_mime: [image/jpeg]
+    max_dimension: 10000
+    min_dimension: 100
+    cache_control: "x"
+`},
+		{name: "image with min above max", body: `
+namespaces:
+  avatar:
+    access: public
+    validator: image
+    upload_ttl: 15m
+    max_size_bytes: 1
+    allowed_mime: [image/jpeg]
+    max_pixels: 100
+    max_dimension: 100
+    min_dimension: 200
+    cache_control: "x"
+`},
+		{name: "container without zip limits", body: `
+namespaces:
+  document:
+    access: signed
+    link_max_ttl: 15m
+    validator: container
+    upload_ttl: 30m
+    max_size_bytes: 1
+    allowed_mime: [application/pdf]
+    cache_control: "x"
+`},
 		{name: "duplicate mime", body: `
 namespaces:
   avatar:
@@ -279,4 +324,57 @@ func TestRegistry_SatisfiesTheUseCasePorts(t *testing.T) {
 	assert.NotNil(t, usecase.NewCompleteUploadHandler(registry, nil, nil, nil, nil, nil, nil))
 	assert.NotNil(t, usecase.NewCreateAccessLinkHandler(registry, nil, nil, nil))
 	assert.NotNil(t, usecase.NewServeVariantHandler(registry, nil, nil))
+}
+
+func TestRegistryProcessPolicy(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	registry := loadTestRegistry(t)
+
+	// Act
+	policy, err := registry.ProcessPolicy(testNamespace(t, "avatar"))
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, ValidatorImage, policy.Validator)
+	assert.Equal(t, int64(50_000_000), policy.MaxPixels)
+	assert.Equal(t, 10000, policy.MaxDimension)
+	assert.Equal(t, 100, policy.MinDimension)
+
+	require.Len(t, policy.Variants, 3)
+	assert.Equal(t, "100x100", policy.Variants[0].Name.String())
+	assert.Equal(t, 100, policy.Variants[0].Width)
+	assert.Equal(t, FitCover, policy.Variants[0].Fit)
+	assert.Equal(t, 82, policy.Variants[0].Quality)
+	assert.Equal(t, FitInside, policy.Variants[2].Fit)
+
+	document, err := registry.ProcessPolicy(testNamespace(t, "document"))
+	require.NoError(t, err)
+	assert.Equal(t, ValidatorContainer, document.Validator)
+	assert.Equal(t, 1000, document.ZipMaxEntries)
+	assert.Equal(t, 20, document.ZipMaxRatio)
+	assert.Empty(t, document.Variants)
+}
+
+func TestRegistryNamespaces(t *testing.T) {
+	t.Parallel()
+
+	// Act
+	names := loadTestRegistry(t).Namespaces()
+
+	// Assert
+	require.Len(t, names, 2)
+	assert.Equal(t, "avatar", names[0].String())
+	assert.Equal(t, "document", names[1].String())
+}
+
+func TestRegistryProcessPolicyRejectsAnUnknownNamespace(t *testing.T) {
+	t.Parallel()
+
+	// Act
+	_, err := loadTestRegistry(t).ProcessPolicy(testNamespace(t, "unknown"))
+
+	// Assert
+	require.ErrorIs(t, err, ErrUnknownNamespace)
 }

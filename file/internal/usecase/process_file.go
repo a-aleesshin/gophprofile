@@ -10,6 +10,28 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 )
 
+type VariantSpec struct {
+	Name    domain.VariantName
+	Width   int
+	Height  int
+	Fit     string
+	Format  string
+	Quality int
+}
+
+type ProcessPolicy struct {
+	Validator        string
+	MaxSizeBytes     int64
+	MaxPixels        int64
+	MaxDimension     int
+	MinDimension     int
+	ZipMaxEntries    int
+	ZipMaxEntryBytes int64
+	ZipMaxTotalBytes int64
+	ZipMaxRatio      int
+	Variants         []VariantSpec
+}
+
 type ProcessParams struct {
 	Source    io.Reader
 	Namespace domain.Namespace

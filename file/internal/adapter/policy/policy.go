@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -140,6 +141,33 @@ func validate(name string, ns Namespace) (domain.MimeSet, []domain.VariantName, 
 		return domain.MimeSet{}, nil, fail("allowed_mime must not be empty")
 	}
 
+	if ns.Validator == ValidatorImage {
+		switch {
+		case ns.MaxPixels <= 0:
+			return domain.MimeSet{}, nil, fail("max_pixels must be positive, it is the bomb guard")
+		case ns.MaxDimension <= 0:
+			return domain.MimeSet{}, nil, fail("max_dimension must be positive")
+		case ns.MinDimension <= 0:
+			return domain.MimeSet{}, nil, fail("min_dimension must be positive")
+		case ns.MinDimension > ns.MaxDimension:
+			return domain.MimeSet{}, nil, fail("min_dimension %d exceeds max_dimension %d",
+				ns.MinDimension, ns.MaxDimension)
+		}
+	}
+
+	if ns.Validator == ValidatorContainer {
+		switch {
+		case ns.ZipMaxEntries <= 0:
+			return domain.MimeSet{}, nil, fail("zip_max_entries must be positive")
+		case ns.ZipMaxEntryBytes <= 0:
+			return domain.MimeSet{}, nil, fail("zip_max_entry_bytes must be positive")
+		case ns.ZipMaxTotalBytes <= 0:
+			return domain.MimeSet{}, nil, fail("zip_max_total_bytes must be positive")
+		case ns.ZipMaxRatio <= 0:
+			return domain.MimeSet{}, nil, fail("zip_max_ratio must be positive")
+		}
+	}
+
 	types := make([]domain.MimeType, 0, len(ns.AllowedMime))
 
 	for _, raw := range ns.AllowedMime {
@@ -226,6 +254,63 @@ func (r *Registry) CompletePolicy(namespace domain.Namespace) (usecase.CompleteP
 	return usecase.CompletePolicy{
 		AllowedMime: r.mime[namespace.String()],
 		Variants:    r.variants[namespace.String()],
+	}, nil
+}
+
+func (r *Registry) Namespaces() []domain.Namespace {
+	names := make([]domain.Namespace, 0, len(r.namespaces))
+
+	for name := range r.namespaces {
+		parsed, err := domain.NewNamespace(name)
+		if err != nil {
+			continue
+		}
+
+		names = append(names, parsed)
+	}
+
+	slices.SortFunc(names, func(a, b domain.Namespace) int {
+		return strings.Compare(a.String(), b.String())
+	})
+
+	return names
+}
+
+func (r *Registry) ProcessPolicy(namespace domain.Namespace) (usecase.ProcessPolicy, error) {
+	found, err := r.Namespace(namespace)
+	if err != nil {
+		return usecase.ProcessPolicy{}, err
+	}
+
+	names := r.variants[namespace.String()]
+	specs := make([]usecase.VariantSpec, 0, len(found.Variants))
+
+	for i, variant := range found.Variants {
+		if i >= len(names) {
+			break
+		}
+
+		specs = append(specs, usecase.VariantSpec{
+			Name:    names[i],
+			Width:   variant.Width,
+			Height:  variant.Height,
+			Fit:     variant.Fit,
+			Format:  variant.Format,
+			Quality: variant.Quality,
+		})
+	}
+
+	return usecase.ProcessPolicy{
+		Validator:        found.Validator,
+		MaxSizeBytes:     found.MaxSizeBytes,
+		MaxPixels:        found.MaxPixels,
+		MaxDimension:     found.MaxDimension,
+		MinDimension:     found.MinDimension,
+		ZipMaxEntries:    found.ZipMaxEntries,
+		ZipMaxEntryBytes: found.ZipMaxEntryBytes,
+		ZipMaxTotalBytes: found.ZipMaxTotalBytes,
+		ZipMaxRatio:      found.ZipMaxRatio,
+		Variants:         specs,
 	}, nil
 }
 
