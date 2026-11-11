@@ -18,6 +18,8 @@ func setS3Env(t *testing.T) {
 	t.Setenv("S3_BUCKET", "gophprofile")
 	t.Setenv("POSTGRES_DSN", "postgres://file:file@localhost:5432/file?sslmode=disable")
 	t.Setenv("POLICIES_PATH", "configs/policies.yaml")
+	t.Setenv("LINK_PUBLIC_BASE", "https://domain.com")
+	t.Setenv("LINK_SECRET", "0123456789abcdef0123456789abcdef")
 }
 
 func TestLoad(t *testing.T) {
@@ -37,6 +39,10 @@ func TestLoad(t *testing.T) {
 	assert.Equal(t, time.Hour, cfg.Postgres.MaxConnLifetime, "durations come from the tag default")
 
 	assert.Equal(t, "configs/policies.yaml", cfg.Policies.Path)
+
+	assert.Equal(t, "https://domain.com", cfg.Links.PublicBase)
+	assert.Equal(t, "0123456789abcdef0123456789abcdef", cfg.Links.Secret)
+	assert.Empty(t, cfg.Links.PreviousSecret, "rotation is off until a second secret is set")
 }
 
 func TestLoad_ReadsTheSectionPrefix(t *testing.T) {
@@ -70,6 +76,8 @@ func TestLoad_RequiresEveryMandatoryVariable(t *testing.T) {
 		"S3_BUCKET",
 		"POSTGRES_DSN",
 		"POLICIES_PATH",
+		"LINK_PUBLIC_BASE",
+		"LINK_SECRET",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			setS3Env(t)
