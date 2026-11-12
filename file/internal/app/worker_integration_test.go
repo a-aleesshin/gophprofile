@@ -32,6 +32,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/broker/rabbitmq"
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
+	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/logging"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -226,7 +227,10 @@ func workerConfig(t *testing.T) config.Worker {
 			ReapInterval:      time.Minute,
 			ReapLimit:         10,
 			ReapStaleAfter:    15 * time.Minute,
+			PruneInterval:     time.Hour,
 		},
+		OutboxPrune:   outbox.PrunerConfig{Retention: 72 * time.Hour, BatchSize: 100},
+		InboxPrune:    inbox.PrunerConfig{Retention: 336 * time.Hour, BatchSize: 100},
 		Health:        health.Config{Timeout: 2 * time.Second},
 		HealthServer:  servers(),
 		MetricsServer: servers(),

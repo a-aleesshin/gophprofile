@@ -13,6 +13,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/grpcserver"
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
+	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/logging"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -31,15 +32,18 @@ type Jobs struct {
 	ReapInterval      time.Duration `env:"REAP_INTERVAL" envDefault:"5m"`
 	ReapLimit         int           `env:"REAP_LIMIT" envDefault:"100"`
 	ReapStaleAfter    time.Duration `env:"REAP_STALE_AFTER" envDefault:"15m"`
+	PruneInterval     time.Duration `env:"PRUNE_INTERVAL" envDefault:"1h"`
 }
 
 type Worker struct {
 	Common
 
-	Rabbit rabbitmq.Config
-	Kafka  kafka.Config
-	Relay  outbox.RelayConfig
-	Jobs   Jobs
+	Rabbit      rabbitmq.Config
+	Kafka       kafka.Config
+	Relay       outbox.RelayConfig
+	Jobs        Jobs
+	OutboxPrune outbox.PrunerConfig
+	InboxPrune  inbox.PrunerConfig
 
 	Health        health.Config
 	HealthServer  httpserver.Config
@@ -94,6 +98,8 @@ func LoadWorker() (Worker, error) {
 		func() error { return config.LoadSection(&cfg.Kafka, "KAFKA_") },
 		func() error { return config.LoadSection(&cfg.Relay, "RELAY_") },
 		func() error { return config.LoadSection(&cfg.Jobs, "JOBS_") },
+		func() error { return config.LoadSection(&cfg.OutboxPrune, "PRUNE_") },
+		func() error { return config.LoadSection(&cfg.InboxPrune, "PRUNE_") },
 		func() error { return config.LoadSection(&cfg.Health, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.HealthServer, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.MetricsServer, "METRICS_") },

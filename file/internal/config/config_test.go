@@ -78,6 +78,13 @@ func TestLoadWorker(t *testing.T) {
 	assert.Equal(t, 5*time.Minute, cfg.Jobs.ReapInterval)
 	assert.Equal(t, 15*time.Minute, cfg.Jobs.ReapStaleAfter)
 
+	assert.Equal(t, time.Hour, cfg.Jobs.PruneInterval)
+	assert.Equal(t, 72*time.Hour, cfg.OutboxPrune.Retention)
+	assert.Equal(t, 1000, cfg.OutboxPrune.BatchSize)
+	assert.Equal(t, 336*time.Hour, cfg.InboxPrune.Retention,
+		"the inbox window must outlast the broker retention, or a replay is applied twice")
+	assert.Equal(t, 1000, cfg.InboxPrune.BatchSize)
+
 	assert.Equal(t, 2*time.Second, cfg.Health.Timeout)
 	assert.Equal(t, ":8081", cfg.HealthServer.Addr)
 	assert.Equal(t, ":9100", cfg.MetricsServer.Addr)

@@ -28,8 +28,10 @@ import (
 const (
 	consumerName = "file.worker"
 
-	jobReconcile = "reconcile-uploads"
-	jobReap      = "reap-stale-files"
+	jobReconcile   = "reconcile-uploads"
+	jobReap        = "reap-stale-files"
+	jobPruneOutbox = "prune-outbox"
+	jobPruneInbox  = "prune-processed-messages"
 )
 
 type Closer func()
@@ -200,7 +202,55 @@ func BuildWorker(
 		return fail(fmt.Errorf("build %s: %w", jobReap, err))
 	}
 
-	runner.Add(jobReconcile, reconcileJob).Add(jobReap, reapJob)
+	outboxPruner, err := outbox.NewPruner(db, now, cfg.OutboxPrune)
+	if err != nil {
+		return fail(fmt.Errorf("build outbox pruner: %w", err))
+	}
+
+	inboxPruner, err := inbox.NewPruner(db, now, cfg.InboxPrune)
+	if err != nil {
+		return fail(fmt.Errorf("build inbox pruner: %w", err))
+	}
+
+	pruneOutboxJob, err := worker.Every(jobPruneOutbox, cfg.Jobs.PruneInterval, logger,
+		func(ctx context.Context) error {
+			removed, err := outboxPruner.Prune(ctx)
+			if err != nil {
+				return err
+			}
+
+			if removed > 0 {
+				logger.Info("pruned published outbox rows", "removed", removed)
+			}
+
+			return nil
+		})
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobPruneOutbox, err))
+	}
+
+	pruneInboxJob, err := worker.Every(jobPruneInbox, cfg.Jobs.PruneInterval, logger,
+		func(ctx context.Context) error {
+			removed, err := inboxPruner.Prune(ctx)
+			if err != nil {
+				return err
+			}
+
+			if removed > 0 {
+				logger.Info("pruned processed messages", "removed", removed)
+			}
+
+			return nil
+		})
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobPruneInbox, err))
+	}
+
+	runner.
+		Add(jobReconcile, reconcileJob).
+		Add(jobReap, reapJob).
+		Add(jobPruneOutbox, pruneOutboxJob).
+		Add(jobPruneInbox, pruneInboxJob)
 
 	checks, err := health.New(cfg.Health,
 		health.Check{Name: "postgres", Critical: true, Probe: pool.Ping},

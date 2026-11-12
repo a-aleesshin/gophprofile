@@ -847,3 +847,126 @@ func TestRelayRetriesALeasedMessageAfterTheLeaseExpires(t *testing.T) {
 	assert.Len(t, sender.sent, 1)
 	assert.NotNil(t, readRow(t, id).PublishedAt)
 }
+
+func TestPrunerRemovesOnlyPublishedRowsPastRetention(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	old := insertPending(t, TransportKafka, "file-1", 0, now)
+	recent := insertPending(t, TransportKafka, "file-2", 0, now)
+	unpublished := insertPending(t, TransportKafka, "file-3", 0, now)
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET published_at = $2 WHERE id = $1`, old, now.Add(-100*time.Hour))
+	require.NoError(t, err)
+
+	_, err = sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET published_at = $2 WHERE id = $1`, recent, now.Add(-time.Hour))
+	require.NoError(t, err)
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: 72 * time.Hour, BatchSize: 100})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed)
+
+	assert.False(t, rowExists(t, old))
+	assert.True(t, rowExists(t, recent), "inside the retention window it stays for debugging")
+	assert.True(t, rowExists(t, unpublished),
+		"an unpublished row is the queue itself, retention has nothing to do with it")
+}
+
+func TestPrunerDeletesInBatches(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	ids := make([]int64, 0, 5)
+	for n := range 5 {
+		ids = append(ids, insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now))
+	}
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET published_at = $1`, now.Add(-100*time.Hour))
+	require.NoError(t, err)
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+	require.NoError(t, err)
+
+	// Act
+	first, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	second, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	third, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	fourth, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, []int64{2, 2, 1, 0}, []int64{first, second, third, fourth},
+		"one statement per batch keeps the lock and the wal bounded")
+}
+
+func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		db     *pgtx.DB
+		clock  Clock
+		mutate func(*PrunerConfig)
+	}{
+		{name: "no db", clock: clock.System{}},
+		{name: "no clock", db: sharedDB},
+		{
+			name: "zero retention", db: sharedDB, clock: clock.System{},
+			mutate: func(c *PrunerConfig) { c.Retention = 0 },
+		},
+		{
+			name: "zero batch size", db: sharedDB, clock: clock.System{},
+			mutate: func(c *PrunerConfig) { c.BatchSize = 0 },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := PrunerConfig{Retention: time.Hour, BatchSize: 10}
+			if test.mutate != nil {
+				test.mutate(&cfg)
+			}
+
+			// Act
+			pruner, err := NewPruner(test.db, test.clock, cfg)
+
+			// Assert
+			require.ErrorIs(t, err, ErrInvalidPrunerConfig)
+			assert.Nil(t, pruner)
+		})
+	}
+}
+
+func rowExists(t *testing.T, id int64) bool {
+	t.Helper()
+
+	var exists bool
+
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
+		`SELECT EXISTS (SELECT 1 FROM outbox WHERE id = $1)`, id).Scan(&exists))
+
+	return exists
+}

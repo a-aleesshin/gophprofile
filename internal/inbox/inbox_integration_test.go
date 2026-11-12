@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,6 +19,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/a-aleesshin/gophprofile/file/migrations"
+	"github.com/a-aleesshin/gophprofile/internal/clock"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
@@ -65,6 +67,13 @@ func TestMain(m *testing.M) {
 	}
 
 	os.Exit(code)
+}
+
+func resetProcessed(t *testing.T) {
+	t.Helper()
+
+	_, err := sharedDB.Pool().Exec(context.Background(), `TRUNCATE processed_messages`)
+	require.NoError(t, err)
 }
 
 func processedCount(t *testing.T, consumer string, messageID uuid.UUID) int {
@@ -311,4 +320,122 @@ func TestOnceOutsideTransactionKeepsTheMessageUnmarkedWhenTheEffectFails(t *test
 	assert.False(t, applied)
 	assert.Zero(t, processedCount(t, "file.worker", messageID),
 		"a failed effect must stay unmarked, or the retry is lost")
+}
+
+func TestPrunerKeepsTheRedeliveryWindow(t *testing.T) {
+	// Arrange
+	resetProcessed(t)
+
+	in := NewInbox(sharedDB)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	old := uuid.New()
+	recent := uuid.New()
+
+	for id, age := range map[uuid.UUID]time.Duration{
+		old:    400 * time.Hour,
+		recent: time.Hour,
+	} {
+		_, err := in.Mark(t.Context(), "prune.test", id)
+		require.NoError(t, err)
+
+		_, err = sharedDB.Pool().Exec(t.Context(), `
+			UPDATE processed_messages SET processed_at = $3
+			 WHERE consumer = $1 AND message_id = $2`,
+			"prune.test", id, now.Add(-age))
+		require.NoError(t, err)
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: 336 * time.Hour, BatchSize: 100})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed)
+
+	assert.Zero(t, processedCount(t, "prune.test", old))
+	assert.Equal(t, 1, processedCount(t, "prune.test", recent),
+		"inside the window the mark must stay, or a replayed message is applied twice")
+}
+
+func TestPrunerDeletesInBatches(t *testing.T) {
+	// Arrange
+	resetProcessed(t)
+
+	in := NewInbox(sharedDB)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	consumer := "prune.batches"
+
+	for range 5 {
+		id := uuid.New()
+
+		_, err := in.Mark(t.Context(), consumer, id)
+		require.NoError(t, err)
+
+		_, err = sharedDB.Pool().Exec(t.Context(), `
+			UPDATE processed_messages SET processed_at = $3
+			 WHERE consumer = $1 AND message_id = $2`, consumer, id, now.Add(-400*time.Hour))
+		require.NoError(t, err)
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+	require.NoError(t, err)
+
+	// Act
+	counts := make([]int64, 0, 4)
+
+	for range 4 {
+		removed, pruneErr := pruner.Prune(t.Context())
+		require.NoError(t, pruneErr)
+
+		counts = append(counts, removed)
+	}
+
+	// Assert
+	assert.Equal(t, []int64{2, 2, 1, 0}, counts)
+}
+
+func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		db     *pgtx.DB
+		clock  Clock
+		mutate func(*PrunerConfig)
+	}{
+		{name: "no db", clock: clock.System{}},
+		{name: "no clock", db: sharedDB},
+		{
+			name: "zero retention", db: sharedDB, clock: clock.System{},
+			mutate: func(c *PrunerConfig) { c.Retention = 0 },
+		},
+		{
+			name: "zero batch size", db: sharedDB, clock: clock.System{},
+			mutate: func(c *PrunerConfig) { c.BatchSize = 0 },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := PrunerConfig{Retention: time.Hour, BatchSize: 10}
+			if test.mutate != nil {
+				test.mutate(&cfg)
+			}
+
+			// Act
+			pruner, err := NewPruner(test.db, test.clock, cfg)
+
+			// Assert
+			require.ErrorIs(t, err, ErrInvalidPrunerConfig)
+			assert.Nil(t, pruner)
+		})
+	}
 }
