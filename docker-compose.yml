@@ -126,7 +126,10 @@ services:
     restart: "no"
 
   file-server:
+    build:
+      context: .
     image: gophprofile/file:dev
+    restart: unless-stopped
     entrypoint: ["server"]
     environment:
       <<: *file-env
@@ -150,7 +153,10 @@ services:
       retries: 20
 
   file-worker:
+    build:
+      context: .
     image: gophprofile/file:dev
+    restart: unless-stopped
     entrypoint: ["worker"]
     environment:
       <<: *file-env
@@ -178,6 +184,7 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     ports:
       - "${PUBLIC_PORT:-8000}:80"
     volumes:
