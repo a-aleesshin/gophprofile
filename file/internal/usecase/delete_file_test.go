@@ -268,3 +268,58 @@ func TestDeleteFile_Errors(t *testing.T) {
 		assert.Equal(t, 2, h.files.calls)
 	})
 }
+
+func TestDeleteFile_RefusesAFileOfAnotherOwner(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file, locations := testReadyFileWithVariants(t)
+	h := newDeleteFileHarness(t, []domain.File{file}, locations)
+
+	stranger, err := domain.NewOwnerRef("somebody-else")
+	require.NoError(t, err)
+
+	// Act
+	_, err = h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: stranger,
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrOwnerMismatch)
+	assert.Empty(t, h.files.saved, "nothing is written")
+	assert.Empty(t, h.enqueuer.commands, "and no objects are queued for deletion")
+}
+
+func TestDeleteFile_AcceptsTheOwnerItWasGiven(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file, locations := testReadyFileWithVariants(t)
+	h := newDeleteFileHarness(t, []domain.File{file}, locations)
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: file.OwnerRef(),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Status.Equal(domain.FileStatusDeleting))
+	require.Len(t, h.enqueuer.commands, 1)
+}
+
+func TestDeleteFile_SkipsTheOwnerCheckWhenNoneIsGiven(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file, locations := testReadyFileWithVariants(t)
+	h := newDeleteFileHarness(t, []domain.File{file}, locations)
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Status.Equal(domain.FileStatusDeleting),
+		"the grpc caller has checked ownership already and passes no owner")
+}

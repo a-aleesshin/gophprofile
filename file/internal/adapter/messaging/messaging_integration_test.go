@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,6 +21,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
 	"github.com/a-aleesshin/gophprofile/file/migrations"
 	"github.com/a-aleesshin/gophprofile/internal/clock"
+	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
@@ -303,4 +305,143 @@ func TestWriter_RejectsIncompleteMessages(t *testing.T) {
 				"a typo in a destination must fail here, not sit until the relay picks it up")
 		})
 	}
+}
+
+type factDelivery struct {
+	body    []byte
+	acked   int
+	retried int
+	dropped int
+	reason  string
+}
+
+func (d *factDelivery) Body() []byte { return d.body }
+
+func (d *factDelivery) Ack(context.Context) error { d.acked++; return nil }
+
+func (d *factDelivery) Retry(context.Context) error { d.retried++; return nil }
+
+func (d *factDelivery) Drop(_ context.Context, reason string) error {
+	d.dropped++
+	d.reason = reason
+
+	return nil
+}
+
+type oneFactBatch struct {
+	deliveries []inbox.Delivery
+	fetched    bool
+}
+
+func (s *oneFactBatch) Fetch(context.Context) ([]inbox.Delivery, error) {
+	if s.fetched {
+		return nil, nil
+	}
+
+	s.fetched = true
+
+	return s.deliveries, nil
+}
+
+type probeDeleter struct {
+	db       *pgtx.DB
+	inside   bool
+	observed bool
+}
+
+func (p *probeDeleter) Handle(
+	ctx context.Context,
+	_ usecase.DeleteFileCommand,
+) (usecase.DeleteFileResult, error) {
+	p.inside = p.db.InTransaction(ctx)
+	p.observed = true
+
+	return usecase.DeleteFileResult{}, nil
+}
+
+func TestAvatarDeletedIsAppliedInsideATransaction(t *testing.T) {
+	// Arrange
+	deleter := &probeDeleter{db: sharedDB}
+
+	body, err := json.Marshal(outbox.Envelope{
+		MessageID:  uuid.New(),
+		Type:       TypeAvatarDeleted,
+		OccurredAt: time.Now().UTC(),
+		Data: json.RawMessage(`{
+			"avatar_id": "0193abcd-ef01-7a23-8b45-0123456789ac",
+			"user_id": "user-1",
+			"file_id": "0193abcd-ef01-7a23-8b45-0123456789ab"
+		}`),
+	})
+	require.NoError(t, err)
+
+	delivery := &factDelivery{body: body}
+
+	consumer, err := inbox.NewConsumer("file.worker.facts",
+		&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
+		inbox.NewInbox(sharedDB), FactHandlers(deleter))
+	require.NoError(t, err)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, inbox.Stats{Handled: 1}, stats)
+	assert.Equal(t, 1, delivery.acked)
+
+	require.True(t, deleter.observed, "the handler must actually have run")
+	assert.True(t, deleter.inside,
+		"marking the file deleting, queueing the cleanup and the processed mark "+
+			"commit together or not at all")
+}
+
+func TestARedeliveredAvatarDeletedIsNotAppliedTwice(t *testing.T) {
+	// Arrange
+	messageID := uuid.New()
+
+	payload := func() []byte {
+		body, err := json.Marshal(outbox.Envelope{
+			MessageID:  messageID,
+			Type:       TypeAvatarDeleted,
+			OccurredAt: time.Now().UTC(),
+			Data: json.RawMessage(`{
+				"avatar_id": "0193abcd-ef01-7a23-8b45-0123456789ac",
+				"user_id": "user-1",
+				"file_id": "0193abcd-ef01-7a23-8b45-0123456789ab"
+			}`),
+		})
+		require.NoError(t, err)
+
+		return body
+	}
+
+	deleter := &probeDeleter{db: sharedDB}
+	handlers := FactHandlers(deleter)
+
+	newConsumer := func(delivery inbox.Delivery) *inbox.Consumer {
+		consumer, err := inbox.NewConsumer("file.worker.facts",
+			&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
+			inbox.NewInbox(sharedDB), handlers)
+		require.NoError(t, err)
+
+		return consumer
+	}
+
+	first, second := &factDelivery{body: payload()}, &factDelivery{body: payload()}
+
+	// Act
+	_, err := newConsumer(first).Consume(t.Context())
+	require.NoError(t, err)
+
+	deleter.observed = false
+
+	stats, err := newConsumer(second).Consume(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, inbox.Stats{Duplicate: 1}, stats)
+	assert.False(t, deleter.observed,
+		"kafka redelivers on rebalance, and deleting a file twice is not harmless")
+	assert.Equal(t, 1, second.acked)
 }

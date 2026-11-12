@@ -11,6 +11,9 @@ const (
 	DestinationProcessFile   = "file.process"
 	DestinationDeleteObjects = "objects.delete"
 	DestinationFileEvents    = "gophprofile.file.v1"
+
+	// Facts of profile. file only reads this topic, it never writes to it.
+	DestinationProfileEvents = "gophprofile.profile.v1"
 )
 
 const (
@@ -19,6 +22,8 @@ const (
 	TypeFileProcessed = "FileProcessed"
 	TypeFileRejected  = "FileRejected"
 	TypeFileDeleted   = "FileDeleted"
+
+	TypeAvatarDeleted = "AvatarDeleted"
 )
 
 type processFileData struct {

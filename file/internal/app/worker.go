@@ -91,6 +91,7 @@ func BuildWorker(
 	processFile := usecase.NewProcessFileHandler(
 		files, variants, store, processor, publisher, db, now)
 	deleteObjects := usecase.NewDeleteObjectsHandler(files, store, publisher, db, now)
+	deleteFile := usecase.NewDeleteFileHandler(files, variants, publisher, db, now)
 	reconcile := usecase.NewReconcileUploadsHandler(uploads, uploads, store, completeUpload, now)
 	reap := usecase.NewReapStaleFilesHandler(
 		files, files, variants, publisher, publisher, db, now)
@@ -139,6 +140,21 @@ func BuildWorker(
 	runner := worker.New().
 		Add("rabbit relay", rabbitRelay).
 		Add("kafka relay", kafkaRelay)
+
+	facts, err := kafka.NewConsumer(cfg.Kafka)
+	if err != nil {
+		return fail(fmt.Errorf("open kafka consumer: %w", err))
+	}
+
+	closers = append(closers, facts.Close)
+
+	factConsumer, err := inbox.NewConsumer(consumerName, facts, messageInbox,
+		messaging.FactHandlers(deleteFile))
+	if err != nil {
+		return fail(fmt.Errorf("build fact consumer: %w", err))
+	}
+
+	runner.Add("fact consumer", factConsumer)
 
 	for _, routingKey := range routingKeys {
 		source, consumerErr := rabbitmq.NewConsumer(
