@@ -222,8 +222,7 @@ func (r *Avatars) StaleByStatus(
 		  FROM avatars
 		 WHERE status = ANY($1) AND updated_at < $2 AND deleted_at IS NULL
 		 ORDER BY updated_at
-		 LIMIT $3
-		   FOR UPDATE SKIP LOCKED`, raw, updatedBefore, limit)
+		 LIMIT $3`, raw, updatedBefore, limit)
 	if err != nil {
 		return nil, fmt.Errorf("select stale avatars: %w", err)
 	}

@@ -145,3 +145,40 @@ func TestResolveCurrentAvatarRunsAgainstPostgres(t *testing.T) {
 		"https://domain.com/upload/"+ready.FileID().String()+"/300x300.jpg",
 		pointed.URL)
 }
+
+func TestFailStuckAvatarsRunsAgainstPostgres(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	avatars := NewAvatars(sharedDB)
+	user := newUser(t)
+
+	stuck := newPendingAvatar(t, user)
+	require.NoError(t, stuck.StartProcessing(testFileRef(t), time.Now().Add(-time.Hour)))
+	require.NoError(t, avatars.Save(t.Context(), &stuck))
+
+	fresh := newPendingAvatar(t, user)
+	require.NoError(t, fresh.StartProcessing(testFileRef(t), time.Now()))
+	require.NoError(t, avatars.Save(t.Context(), &fresh))
+
+	// Act
+	got, err := usecase.NewFailStuckAvatarsHandler(avatars, sharedDB, clock.System{}).
+		Handle(t.Context(), usecase.FailStuckAvatarsCommand{
+			StaleAfter: 30 * time.Minute, Limit: 50,
+		})
+
+	// Assert
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, got.Failed, 1)
+
+	failed, err := avatars.ByID(t.Context(), stuck.ID())
+	require.NoError(t, err)
+	assert.True(t, failed.Status().Equal(domain.AvatarStatusFailed))
+	assert.Equal(t, usecase.ReasonProcessingStuck, failed.FailedReason())
+	assert.Equal(t, int64(3), failed.Version(), "the watchdog writes under the version it read")
+
+	untouched, err := avatars.ByID(t.Context(), fresh.ID())
+	require.NoError(t, err)
+	assert.True(t, untouched.Status().Equal(domain.AvatarStatusProcessing),
+		"a file that file may still be working on must be left alone")
+}

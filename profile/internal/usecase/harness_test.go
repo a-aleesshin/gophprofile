@@ -86,6 +86,12 @@ type stubAvatars struct {
 	saveErr  error
 	created  []domain.Avatar
 	saved    []domain.Avatar
+
+	stale         []domain.Avatar
+	staleErr      error
+	staleStatuses []domain.AvatarStatus
+	staleBefore   time.Time
+	staleLimit    int
 }
 
 func (s *stubAvatars) ByID(_ context.Context, id domain.AvatarID) (domain.Avatar, error) {
@@ -128,6 +134,23 @@ func (s *stubAvatars) Save(_ context.Context, avatar *domain.Avatar) error {
 
 func (s *stubAvatars) CountByUser(context.Context, domain.UserID) (int, error) {
 	return s.count, s.countErr
+}
+
+func (s *stubAvatars) StaleByStatus(
+	_ context.Context,
+	statuses []domain.AvatarStatus,
+	updatedBefore time.Time,
+	limit int,
+) ([]domain.Avatar, error) {
+	s.staleStatuses = statuses
+	s.staleBefore = updatedBefore
+	s.staleLimit = limit
+
+	if s.staleErr != nil {
+		return nil, s.staleErr
+	}
+
+	return s.stale, nil
 }
 
 type stubTickets struct {
@@ -255,6 +278,15 @@ func testPendingAvatar(t *testing.T, user domain.UserID) domain.Avatar {
 		Now:      testNow,
 	})
 	require.NoError(t, err)
+
+	return avatar
+}
+
+func testProcessingAvatar(t *testing.T, user domain.UserID) domain.Avatar {
+	t.Helper()
+
+	avatar := testPendingAvatar(t, user)
+	require.NoError(t, avatar.StartProcessing(testFileRef(t), testNow))
 
 	return avatar
 }

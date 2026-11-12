@@ -53,15 +53,6 @@ func newDeleteAvatarHarness(
 	}
 }
 
-func testProcessingAvatar(t *testing.T, user domain.UserID) domain.Avatar {
-	t.Helper()
-
-	avatar := testPendingAvatar(t, user)
-	require.NoError(t, avatar.StartProcessing(testFileRef(t), testNow))
-
-	return avatar
-}
-
 func TestDeleteAvatar_PublishesTheFactInsideTheTransaction(t *testing.T) {
 	t.Parallel()
 
