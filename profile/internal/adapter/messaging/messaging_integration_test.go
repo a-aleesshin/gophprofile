@@ -17,6 +17,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/a-aleesshin/gophprofile/internal/clock"
+	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
@@ -253,4 +254,220 @@ func TestPublisherFitsThePortItWasWrittenFor(t *testing.T) {
 	// The port is unexported, so handing the publisher to the handler that
 	// declares it is the only way to assert the fit, and it fails to compile.
 	assert.NotNil(t, usecase.NewDeleteAvatarHandler(nil, nil, testPublisher(t), nil, nil))
+}
+
+type recordedDelivery struct {
+	body    []byte
+	acked   int
+	retried int
+	dropped int
+	reason  string
+}
+
+func (d *recordedDelivery) Body() []byte { return d.body }
+
+func (d *recordedDelivery) Ack(context.Context) error { d.acked++; return nil }
+
+func (d *recordedDelivery) Retry(context.Context) error { d.retried++; return nil }
+
+func (d *recordedDelivery) Drop(_ context.Context, reason string) error {
+	d.dropped++
+	d.reason = reason
+
+	return nil
+}
+
+type oneBatch struct {
+	deliveries []inbox.Delivery
+	fetched    bool
+}
+
+func (s *oneBatch) Fetch(context.Context) ([]inbox.Delivery, error) {
+	if s.fetched {
+		return nil, nil
+	}
+
+	s.fetched = true
+
+	return s.deliveries, nil
+}
+
+type transactionProbeApplier struct {
+	db       *pgtx.DB
+	inside   bool
+	observed bool
+}
+
+func (a *transactionProbeApplier) Handle(
+	ctx context.Context,
+	_ usecase.FileProcessedFact,
+) (usecase.ApplyFactResult, error) {
+	a.inside = a.db.InTransaction(ctx)
+	a.observed = true
+
+	return usecase.ApplyFactResult{}, nil
+}
+
+func (a *transactionProbeApplier) rejected(
+	ctx context.Context,
+	_ usecase.FileRejectedFact,
+) (usecase.ApplyFactResult, error) {
+	a.inside = a.db.InTransaction(ctx)
+	a.observed = true
+
+	return usecase.ApplyFactResult{}, nil
+}
+
+type rejectedFunc func(context.Context, usecase.FileRejectedFact) (usecase.ApplyFactResult, error)
+
+func (f rejectedFunc) Handle(
+	ctx context.Context,
+	fact usecase.FileRejectedFact,
+) (usecase.ApplyFactResult, error) {
+	return f(ctx, fact)
+}
+
+type deletedNoop struct{}
+
+func (deletedNoop) Handle(
+	context.Context,
+	usecase.FileDeletedFact,
+) (usecase.ApplyFactResult, error) {
+	return usecase.ApplyFactResult{}, nil
+}
+
+func TestFactsAreAppliedInsideATransaction(t *testing.T) {
+	// Arrange
+	applier := &transactionProbeApplier{db: sharedDB}
+
+	body, err := json.Marshal(outbox.Envelope{
+		MessageID:  uuid.New(),
+		Type:       TypeFileProcessed,
+		OccurredAt: time.Now().UTC(),
+		Data: json.RawMessage(`{
+			"file_id": "0193abcd-ef01-7a23-8b45-0123456789ab",
+			"original_name": "avatar.jpg",
+			"mime_type": "image/jpeg",
+			"size_bytes": 2048,
+			"width": 1920,
+			"height": 1080,
+			"variants": [
+				{"name": "original", "ext": "jpg", "mime_type": "image/jpeg",
+				 "width": 1920, "height": 1080},
+				{"name": "300x300", "ext": "jpg", "mime_type": "image/jpeg",
+				 "width": 300, "height": 300}
+			]
+		}`),
+	})
+	require.NoError(t, err)
+
+	delivery := &recordedDelivery{body: body}
+
+	consumer, err := inbox.NewConsumer("profile.worker",
+		&oneBatch{deliveries: []inbox.Delivery{delivery}},
+		inbox.NewInbox(sharedDB),
+		FactHandlers(applier, rejectedFunc(applier.rejected), deletedNoop{}))
+	require.NoError(t, err)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, inbox.Stats{Handled: 1}, stats)
+	assert.Equal(t, 1, delivery.acked)
+
+	require.True(t, applier.observed, "the handler must actually have run")
+	assert.True(t, applier.inside,
+		"the avatar row and the processed mark commit together or not at all")
+}
+
+func TestARedeliveredFactIsNotAppliedTwice(t *testing.T) {
+	// Arrange
+	messageID := uuid.New()
+
+	payload := func() []byte {
+		body, err := json.Marshal(outbox.Envelope{
+			MessageID:  messageID,
+			Type:       TypeFileRejected,
+			OccurredAt: time.Now().UTC(),
+			Data: json.RawMessage(
+				`{"file_id": "0193abcd-ef01-7a23-8b45-0123456789ab", "reason": "decode_failed"}`),
+		})
+		require.NoError(t, err)
+
+		return body
+	}
+
+	applied := 0
+
+	handlers := FactHandlers(
+		&transactionProbeApplier{db: sharedDB},
+		rejectedFunc(func(
+			context.Context, usecase.FileRejectedFact,
+		) (usecase.ApplyFactResult, error) {
+			applied++
+
+			return usecase.ApplyFactResult{}, nil
+		}),
+		deletedNoop{})
+
+	newConsumer := func(delivery inbox.Delivery) *inbox.Consumer {
+		consumer, err := inbox.NewConsumer("profile.worker",
+			&oneBatch{deliveries: []inbox.Delivery{delivery}},
+			inbox.NewInbox(sharedDB), handlers)
+		require.NoError(t, err)
+
+		return consumer
+	}
+
+	first, second := &recordedDelivery{body: payload()}, &recordedDelivery{body: payload()}
+
+	// Act
+	_, err := newConsumer(first).Consume(t.Context())
+	require.NoError(t, err)
+
+	stats, err := newConsumer(second).Consume(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, inbox.Stats{Duplicate: 1}, stats)
+	assert.Equal(t, 1, applied, "kafka redelivers on rebalance, the effect must not")
+	assert.Equal(t, 1, second.acked, "a duplicate is settled, not retried")
+}
+
+func TestAFactWeCannotUseIsQuarantined(t *testing.T) {
+	// Arrange
+	body, err := json.Marshal(outbox.Envelope{
+		MessageID:  uuid.New(),
+		Type:       TypeFileRejected,
+		OccurredAt: time.Now().UTC(),
+		Data:       json.RawMessage(`{"file_id": "not-a-uuid", "reason": "decode_failed"}`),
+	})
+	require.NoError(t, err)
+
+	delivery := &recordedDelivery{body: body}
+
+	consumer, err := inbox.NewConsumer("profile.worker",
+		&oneBatch{deliveries: []inbox.Delivery{delivery}},
+		inbox.NewInbox(sharedDB),
+		FactHandlers(&transactionProbeApplier{db: sharedDB},
+			rejectedFunc(func(
+				context.Context, usecase.FileRejectedFact,
+			) (usecase.ApplyFactResult, error) {
+				t.Fatal("the handler must not be reached")
+
+				return usecase.ApplyFactResult{}, nil
+			}), deletedNoop{}))
+	require.NoError(t, err)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, inbox.Stats{Dropped: 1}, stats)
+	assert.Equal(t, 1, delivery.dropped)
+	assert.Contains(t, delivery.reason, "file id")
+	assert.Zero(t, delivery.retried, "retrying a malformed uuid would spin forever")
 }

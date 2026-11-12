@@ -74,6 +74,14 @@ type bindEmailBody struct {
 	EmailHash string `json:"email_hash"`
 }
 
+const reasonUploadFailed = "upload_failed"
+
+var opaqueReasons = map[string]bool{
+	"internal_error":              true,
+	usecase.ReasonProcessingStuck: true,
+	usecase.ReasonUploadUnknown:   true,
+}
+
 func toAvatarBody(view usecase.AvatarView, urls map[string]string) avatarBody {
 	body := avatarBody{
 		ID:           view.ID.String(),
@@ -83,6 +91,10 @@ func toAvatarBody(view usecase.AvatarView, urls map[string]string) avatarBody {
 		FailedReason: view.FailedReason,
 		CreatedAt:    view.CreatedAt,
 		UpdatedAt:    view.UpdatedAt,
+	}
+
+	if opaqueReasons[body.FailedReason] {
+		body.FailedReason = reasonUploadFailed
 	}
 
 	if view.MimeType != "" {

@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	ReasonUploadAbandoned = "the upload was never finished"
-	ReasonProcessingStuck = "the file service never reported a result"
-	ReasonUploadUnknown   = "the upload ticket is gone"
+	ReasonUploadAbandoned = "upload_abandoned"
+	ReasonProcessingStuck = "processing_timeout"
+	ReasonUploadUnknown   = "upload_unknown"
 )
 
 type staleAvatarFinder interface {
