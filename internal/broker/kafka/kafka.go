@@ -63,6 +63,14 @@ func (p *Producer) Send(ctx context.Context, message outbox.Pending) error {
 	return nil
 }
 
+func (p *Producer) Ping(ctx context.Context) error {
+	if err := p.client.Ping(ctx); err != nil {
+		return fmt.Errorf("ping kafka: %w", err)
+	}
+
+	return nil
+}
+
 func (p *Producer) Close() {
 	p.client.Close()
 }

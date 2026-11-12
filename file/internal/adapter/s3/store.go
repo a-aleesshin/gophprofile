@@ -102,6 +102,19 @@ func (s *Store) PresignUpload(
 	return usecase.PresignedUpload{URL: public, Fields: formData}, nil
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	exists, err := s.client.BucketExists(ctx, s.bucket)
+	if err != nil {
+		return fmt.Errorf("check bucket %s: %w", s.bucket, err)
+	}
+
+	if !exists {
+		return fmt.Errorf("bucket %s does not exist", s.bucket)
+	}
+
+	return nil
+}
+
 func (s *Store) Head(
 	ctx context.Context,
 	location domain.Location,
