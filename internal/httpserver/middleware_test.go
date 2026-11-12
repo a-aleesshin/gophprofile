@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -249,4 +250,116 @@ func TestLogFeedsTheMetrics(t *testing.T) {
 	assert.InDelta(t, before+1,
 		counterValue(t, "gophprofile_http_requests_total", labels), 0.001,
 		"the log line and the counter come from the same place, so neither can drift")
+}
+
+type countingWriter struct {
+	*httptest.ResponseRecorder
+
+	writes    int
+	readFroms int
+}
+
+func (w *countingWriter) Write(body []byte) (int, error) {
+	w.writes++
+
+	return w.ResponseRecorder.Write(body)
+}
+
+func (w *countingWriter) ReadFrom(src io.Reader) (int64, error) {
+	w.readFroms++
+
+	return io.Copy(w.ResponseRecorder.Body, src)
+}
+
+type plainReader struct{ io.Reader }
+
+func bigBody() (io.Reader, int) {
+	payload := bytes.Repeat([]byte("variant"), 32<<10)
+
+	return plainReader{bytes.NewReader(payload)}, len(payload)
+}
+
+func TestRecorderKeepsTheFastCopyPath(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	inner := &countingWriter{ResponseRecorder: httptest.NewRecorder()}
+	recorder := &statusRecorder{ResponseWriter: inner}
+	src, size := bigBody()
+
+	// Act
+	written, err := io.Copy(recorder, src)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(size), written)
+
+	assert.Equal(t, 1, inner.readFroms,
+		"hiding ReadFrom costs the sendfile path and one syscall per 32 KiB instead")
+	assert.Zero(t, inner.writes)
+
+	assert.Equal(t, size, inner.Body.Len())
+	assert.Equal(t, http.StatusOK, recorder.statusOrOK(),
+		"a body copied this way still has to be logged as a 200")
+}
+
+func TestRecorderCopiesWhenTheWriterCannotReadFrom(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	inner := httptest.NewRecorder()
+	recorder := &statusRecorder{ResponseWriter: inner}
+	src, size := bigBody()
+
+	// Act
+	written, err := io.Copy(recorder, src)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(size), written)
+	assert.Equal(t, size, inner.Body.Len())
+	assert.Equal(t, http.StatusOK, recorder.statusOrOK())
+}
+
+func TestTheServedChainKeepsTheFastCopyPath(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	logger, _ := captureLogs()
+
+	src, size := bigBody()
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /things/{id}", Log(logger,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, err := io.Copy(w, src)
+			require.NoError(t, err)
+		})))
+
+	inner := &countingWriter{ResponseRecorder: httptest.NewRecorder()}
+
+	// Act
+	Recover(logger, mux).ServeHTTP(inner, httptest.NewRequest(http.MethodGet, "/things/7", nil))
+
+	// Assert
+	assert.Equal(t, 1, inner.readFroms,
+		"two nested recorders must both delegate, or the gain is lost on the way down")
+	assert.Zero(t, inner.writes)
+	assert.Equal(t, size, inner.Body.Len())
+}
+
+func TestRecorderLetsTheResponseControllerThrough(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	inner := httptest.NewRecorder()
+	recorder := &statusRecorder{ResponseWriter: inner}
+
+	// Act
+	err := http.NewResponseController(recorder).Flush()
+
+	// Assert
+	require.NoError(t, err,
+		"without Unwrap the controller cannot see the real writer and reports ErrNotSupported")
+	assert.True(t, inner.Flushed)
 }

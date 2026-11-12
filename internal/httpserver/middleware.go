@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -29,6 +30,20 @@ func (r *statusRecorder) Write(body []byte) (int, error) {
 
 	return r.ResponseWriter.Write(body)
 }
+
+func (r *statusRecorder) ReadFrom(src io.Reader) (int64, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+
+	if from, ok := r.ResponseWriter.(io.ReaderFrom); ok {
+		return from.ReadFrom(src)
+	}
+
+	return io.Copy(r.ResponseWriter, src)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (r *statusRecorder) statusOrOK() int {
 	if r.status == 0 {

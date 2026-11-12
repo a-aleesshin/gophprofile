@@ -189,11 +189,6 @@ func TestLoadServerRequiresEveryMandatoryVariable(t *testing.T) {
 	}
 }
 
-// Addresses are no longer required by an env tag, because pprof has to be
-// allowed to stay unset. The check moved to httpserver.New, which refuses an
-// empty address and names the section — see its own tests. What this one keeps
-// is the promise that an unset pprof is a valid configuration and a switched
-// off server, not a silently listening one.
 func TestPprofIsOptionalAndOffByDefault(t *testing.T) {
 	// Arrange
 	setServerEnv(t)

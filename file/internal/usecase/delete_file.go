@@ -23,10 +23,6 @@ type deleteObjectsEnqueuer interface {
 
 var ErrOwnerMismatch = errors.New("the file belongs to another owner")
 
-// OwnerRef is optional. The gRPC caller leaves it empty because profile has
-// already checked who owns the avatar; a fact arriving over Kafka carries the
-// owner it believes in, and a mismatch there means the fact is about some other
-// file — deleting on it would destroy data nobody asked to delete.
 type DeleteFileCommand struct {
 	FileID   domain.FileID
 	OwnerRef domain.OwnerRef

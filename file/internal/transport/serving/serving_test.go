@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -396,4 +397,127 @@ func TestServingLogsTheRouteAndSurvivesAPanic(t *testing.T) {
 	assert.Equal(t, "ERROR", record["level"])
 	assert.Equal(t, "GET /upload/{file_id}/{object}", record["route"])
 	assert.Equal(t, float64(http.StatusInternalServerError), record["status"])
+}
+
+type contextBody struct {
+	ctx    context.Context
+	data   *bytes.Reader
+	before time.Duration
+	waited bool
+}
+
+func (b *contextBody) Read(buffer []byte) (int, error) {
+	if !b.waited {
+		b.waited = true
+
+		time.Sleep(b.before)
+	}
+
+	if err := b.ctx.Err(); err != nil {
+		return 0, fmt.Errorf("read object: %w", err)
+	}
+
+	return b.data.Read(buffer)
+}
+
+func (b *contextBody) Close() error { return nil }
+
+type slowServer struct {
+	lookup  time.Duration
+	stream  time.Duration
+	payload string
+	err     error
+}
+
+func (s *slowServer) Handle(
+	ctx context.Context,
+	_ usecase.ServeVariantCommand,
+) (usecase.ServeVariantResult, error) {
+	select {
+	case <-ctx.Done():
+		return usecase.ServeVariantResult{}, fmt.Errorf("select variant: %w", ctx.Err())
+	case <-time.After(s.lookup):
+	}
+
+	if s.err != nil {
+		return usecase.ServeVariantResult{}, s.err
+	}
+
+	result := okResult()
+	result.Body = &contextBody{
+		ctx:    ctx,
+		data:   bytes.NewReader([]byte(s.payload)),
+		before: s.stream,
+	}
+	result.SizeBytes = int64(len(s.payload))
+
+	return result, nil
+}
+
+func callSlow(t *testing.T, server *slowServer, timeout time.Duration) *httptest.ResponseRecorder {
+	t.Helper()
+
+	handler, err := NewHandler(server, &stubVerifier{}, Config{Timeout: timeout}, testLogger())
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet,
+		"/upload/"+testFileID+"/"+testVariant+"."+testExt, nil))
+
+	return recorder
+}
+
+func TestServeKeepsStreamingPastTheTimeout(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	payload := strings.Repeat("document", 1024)
+
+	server := &slowServer{
+		lookup:  10 * time.Millisecond,
+		stream:  150 * time.Millisecond,
+		payload: payload,
+	}
+
+	// Act
+	recorder := callSlow(t, server, 50*time.Millisecond)
+
+	// Assert
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, payload, recorder.Body.String(),
+		"the timeout bounds the lookup; a body cut at three seconds is a truncated document")
+	assert.Equal(t, strconv.Itoa(len(payload)), recorder.Header().Get("Content-Length"),
+		"a short body under a full Content-Length is what the client sees as corruption")
+}
+
+func TestServeGivesUpOnASlowLookup(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	server := &slowServer{lookup: time.Second, payload: testBody}
+
+	// Act
+	recorder := callSlow(t, server, 20*time.Millisecond)
+
+	// Assert
+	assert.Equal(t, http.StatusGatewayTimeout, recorder.Code,
+		"waiting on postgres or s3 for the first byte still has to end")
+	assert.JSONEq(t, `{"error":"timeout"}`, recorder.Body.String())
+}
+
+func TestServeStillReportsARealFailureAfterAFastLookup(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	server := &slowServer{lookup: time.Millisecond, err: usecase.ErrStorageUnavailable}
+
+	// Act
+	recorder := callSlow(t, server, time.Second)
+
+	// Assert
+	assert.Equal(t, http.StatusBadGateway, recorder.Code,
+		"the timeout branch must not swallow the mapping of everything else")
 }

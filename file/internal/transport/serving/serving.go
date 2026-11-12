@@ -144,10 +144,23 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 		cmd.Signed = true
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), h.timeout)
+	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	lookup := time.AfterFunc(h.timeout, cancel)
+
 	result, err := h.variants.Handle(ctx, cmd)
+
+	if !lookup.Stop() {
+		if result.Body != nil {
+			_ = result.Body.Close()
+		}
+
+		writeError(w, http.StatusGatewayTimeout, "timeout")
+
+		return
+	}
+
 	if err != nil {
 		writeFailure(w, err)
 

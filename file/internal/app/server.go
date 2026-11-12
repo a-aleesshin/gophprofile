@@ -165,8 +165,6 @@ func BuildServer(
 		Add("metrics server", metricsServer).
 		Add("grpc health", grpcHealthJob)
 
-	// pprof is opt in: unset means no profiling endpoint at all, because the one
-	// it exposes needs no credentials and answers to anything on the network.
 	if cfg.PprofServer.Disabled() {
 		logger.Info("pprof is disabled", "reason", "no address configured")
 
