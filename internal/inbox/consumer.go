@@ -27,7 +27,22 @@ type Source interface {
 	Fetch(ctx context.Context) ([]Delivery, error)
 }
 
-type Handler func(ctx context.Context, message outbox.Envelope) error
+type Handler struct {
+	run           func(ctx context.Context, message outbox.Envelope) error
+	transactional bool
+}
+
+func (h Handler) Run(ctx context.Context, message outbox.Envelope) error {
+	return h.run(ctx, message)
+}
+
+func Repeatable(run func(ctx context.Context, message outbox.Envelope) error) Handler {
+	return Handler{run: run}
+}
+
+func Transactional(run func(ctx context.Context, message outbox.Envelope) error) Handler {
+	return Handler{run: run, transactional: true}
+}
 
 type Stats struct {
 	Handled   int
@@ -69,8 +84,9 @@ func NewConsumer(
 			return nil, fmt.Errorf("%w: a handler needs a message type", ErrInvalidConsumer)
 		}
 
-		if handler == nil {
-			return nil, fmt.Errorf("%w: handler for %q is nil", ErrInvalidConsumer, messageType)
+		if handler.run == nil {
+			return nil, fmt.Errorf("%w: handler for %q has nothing to run",
+				ErrInvalidConsumer, messageType)
 		}
 
 		routes[messageType] = handler
@@ -117,8 +133,19 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 			continue
 		}
 
-		applied, err := c.inbox.Once(ctx, c.name, envelope.MessageID,
-			func(ctx context.Context) error { return handler(ctx, envelope) })
+		effect := func(ctx context.Context) error { return handler.run(ctx, envelope) }
+
+		var (
+			applied bool
+			err     error
+		)
+
+		if handler.transactional {
+			applied, err = c.inbox.Once(ctx, c.name, envelope.MessageID, effect)
+		} else {
+			applied, err = c.inbox.OnceOutsideTransaction(
+				ctx, c.name, envelope.MessageID, effect)
+		}
 
 		if err != nil {
 			if ctx.Err() != nil {

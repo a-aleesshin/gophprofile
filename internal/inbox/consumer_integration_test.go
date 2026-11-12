@@ -83,13 +83,17 @@ func envelopeBody(t *testing.T, id uuid.UUID, messageType string) []byte {
 	return body
 }
 
-func testConsumer(t *testing.T, handler Handler, deliveries ...Delivery) (*Consumer, *fakeSource) {
+func testConsumer(
+	t *testing.T,
+	run func(ctx context.Context, message outbox.Envelope) error,
+	deliveries ...Delivery,
+) (*Consumer, *fakeSource) {
 	t.Helper()
 
 	source := &fakeSource{batches: [][]Delivery{deliveries}}
 
 	consumer, err := NewConsumer("file.worker", source, NewInbox(sharedDB),
-		map[string]Handler{"ProcessFile": handler})
+		map[string]Handler{"ProcessFile": Repeatable(run)})
 	require.NoError(t, err)
 
 	return consumer, source
@@ -173,7 +177,7 @@ func TestConsumerDropsWhatCanNeverBeProcessed(t *testing.T) {
 	tests := []struct {
 		name     string
 		delivery *fakeDelivery
-		handler  Handler
+		handler  func(ctx context.Context, message outbox.Envelope) error
 		reason   string
 	}{
 		{
@@ -257,7 +261,9 @@ func TestConsumerReportsAFetchFailure(t *testing.T) {
 	source := &fakeSource{err: broken}
 
 	consumer, err := NewConsumer("file.worker", source, NewInbox(sharedDB),
-		map[string]Handler{"ProcessFile": func(context.Context, outbox.Envelope) error { return nil }})
+		map[string]Handler{
+			"ProcessFile": Repeatable(func(context.Context, outbox.Envelope) error { return nil }),
+		})
 	require.NoError(t, err)
 
 	// Act
@@ -273,7 +279,9 @@ func TestConsumerRunStopsOnTheFirstFailure(t *testing.T) {
 	broken := errors.New("rabbit channel closed")
 
 	consumer, err := NewConsumer("file.worker", &fakeSource{err: broken}, NewInbox(sharedDB),
-		map[string]Handler{"ProcessFile": func(context.Context, outbox.Envelope) error { return nil }})
+		map[string]Handler{
+			"ProcessFile": Repeatable(func(context.Context, outbox.Envelope) error { return nil }),
+		})
 	require.NoError(t, err)
 
 	// Act
@@ -281,4 +289,54 @@ func TestConsumerRunStopsOnTheFirstFailure(t *testing.T) {
 
 	// Assert
 	require.ErrorIs(t, err, broken)
+}
+
+func TestConsumerRunsARepeatableHandlerOutsideATransaction(t *testing.T) {
+	// Arrange
+	var insideTransaction bool
+
+	delivery := &fakeDelivery{body: envelopeBody(t, uuid.New(), "ProcessFile")}
+
+	consumer, _ := testConsumer(t, func(ctx context.Context, _ outbox.Envelope) error {
+		insideTransaction = sharedDB.InTransaction(ctx)
+
+		return nil
+	}, delivery)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, Stats{Handled: 1}, stats)
+	assert.Equal(t, 1, delivery.acked)
+	assert.False(t, insideTransaction,
+		"process file reads s3, decodes and resizes, none of which belongs in a transaction")
+}
+
+func TestConsumerRunsATransactionalHandlerInsideATransaction(t *testing.T) {
+	// Arrange
+	var insideTransaction bool
+
+	delivery := &fakeDelivery{body: envelopeBody(t, uuid.New(), "FileProcessed")}
+	source := &fakeSource{batches: [][]Delivery{{delivery}}}
+
+	consumer, err := NewConsumer("profile.worker", source, NewInbox(sharedDB),
+		map[string]Handler{
+			"FileProcessed": Transactional(func(ctx context.Context, _ outbox.Envelope) error {
+				insideTransaction = sharedDB.InTransaction(ctx)
+
+				return nil
+			}),
+		})
+	require.NoError(t, err)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, Stats{Handled: 1}, stats)
+	assert.True(t, insideTransaction,
+		"a database-only effect commits together with its inbox row, that is the point")
 }

@@ -22,7 +22,7 @@ func TestNewConsumer(t *testing.T) {
 	t.Parallel()
 
 	in := NewInbox(pgtx.New(nil))
-	handlers := map[string]Handler{"ProcessFile": noopHandler}
+	handlers := map[string]Handler{"ProcessFile": Repeatable(noopHandler)}
 
 	t.Run("accepts a complete set", func(t *testing.T) {
 		t.Parallel()
@@ -39,7 +39,7 @@ func TestNewConsumer(t *testing.T) {
 		t.Parallel()
 
 		// Arrange
-		mutable := map[string]Handler{"ProcessFile": noopHandler}
+		mutable := map[string]Handler{"ProcessFile": Repeatable(noopHandler)}
 
 		consumer, err := NewConsumer("file.worker", stubSource{}, in, mutable)
 		require.NoError(t, err)
@@ -68,11 +68,11 @@ func TestNewConsumer(t *testing.T) {
 		{name: "no handlers", consumer: "file.worker", source: stubSource{}, inbox: in},
 		{
 			name: "handler without a type", consumer: "file.worker", source: stubSource{},
-			inbox: in, handlers: map[string]Handler{"": noopHandler},
+			inbox: in, handlers: map[string]Handler{"": Repeatable(noopHandler)},
 		},
 		{
 			name: "nil handler", consumer: "file.worker", source: stubSource{},
-			inbox: in, handlers: map[string]Handler{"ProcessFile": nil},
+			inbox: in, handlers: map[string]Handler{"ProcessFile": {}},
 		},
 	}
 

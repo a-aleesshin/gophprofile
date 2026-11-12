@@ -70,7 +70,7 @@ func TestCommandHandlersDecodeProcessFile(t *testing.T) {
 	})
 
 	// Act
-	err = handlers[TypeProcessFile](t.Context(), message)
+	err = handlers[TypeProcessFile].Run(t.Context(), message)
 
 	// Assert
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestCommandHandlersDecodeDeleteObjects(t *testing.T) {
 	})
 
 	// Act
-	err = handlers[TypeDeleteObjects](t.Context(), message)
+	err = handlers[TypeDeleteObjects].Run(t.Context(), message)
 
 	// Assert
 	require.NoError(t, err)
@@ -160,7 +160,7 @@ func TestCommandHandlersRefuseWhatCanNeverBeDecoded(t *testing.T) {
 			t.Parallel()
 
 			// Act
-			err := handlers[test.messageType](t.Context(), envelopeFor(t, test.messageType, test.data))
+			err := handlers[test.messageType].Run(t.Context(), envelopeFor(t, test.messageType, test.data))
 
 			// Assert
 			require.ErrorIs(t, err, inbox.ErrUnprocessable,
@@ -177,7 +177,7 @@ func TestCommandHandlersRefuseABrokenPayload(t *testing.T) {
 	message := outbox.Envelope{Type: TypeProcessFile, Data: json.RawMessage(`{"file_id":`)}
 
 	// Act
-	err := handlers[TypeProcessFile](t.Context(), message)
+	err := handlers[TypeProcessFile].Run(t.Context(), message)
 
 	// Assert
 	require.ErrorIs(t, err, inbox.ErrUnprocessable)
@@ -198,7 +198,7 @@ func TestCommandHandlersSeparateTransientFromPermanent(t *testing.T) {
 
 		// Act
 		handlers := CommandHandlers(&spyProcessor{err: transient}, &spyDeleter{})
-		err := handlers[TypeProcessFile](t.Context(), envelopeFor(t, TypeProcessFile, data))
+		err := handlers[TypeProcessFile].Run(t.Context(), envelopeFor(t, TypeProcessFile, data))
 
 		// Assert
 		require.ErrorIs(t, err, transient)
@@ -210,7 +210,7 @@ func TestCommandHandlersSeparateTransientFromPermanent(t *testing.T) {
 
 		// Act
 		handlers := CommandHandlers(&spyProcessor{err: permanent}, &spyDeleter{})
-		err := handlers[TypeProcessFile](t.Context(), envelopeFor(t, TypeProcessFile, data))
+		err := handlers[TypeProcessFile].Run(t.Context(), envelopeFor(t, TypeProcessFile, data))
 
 		// Assert
 		require.ErrorIs(t, err, inbox.ErrUnprocessable)

@@ -213,3 +213,102 @@ func TestInboxRejectsAnIncompleteCall(t *testing.T) {
 		})
 	}
 }
+
+func TestOnceOutsideTransactionLeavesNoTransactionOpen(t *testing.T) {
+	// Arrange
+	in := NewInbox(sharedDB)
+	messageID := uuid.New()
+
+	var (
+		insideTransaction bool
+		visibleToOthers   bool
+	)
+
+	// Act
+	applied, err := in.OnceOutsideTransaction(t.Context(), "file.worker", messageID,
+		func(ctx context.Context) error {
+			insideTransaction = sharedDB.InTransaction(ctx)
+
+			if _, writeErr := sharedDB.Querier(ctx).Exec(ctx, `
+				INSERT INTO processed_messages (consumer, message_id)
+				VALUES ('probe', $1)`, messageID); writeErr != nil {
+				return writeErr
+			}
+
+			visibleToOthers = processedCount(t, "probe", messageID) == 1
+
+			return nil
+		})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, applied)
+
+	assert.False(t, insideTransaction,
+		"a heavy effect must not hold a pool connection in a transaction")
+	assert.True(t, visibleToOthers,
+		"what the effect writes is committed at once, so the reaper can see the progress")
+	assert.Equal(t, 1, processedCount(t, "file.worker", messageID))
+}
+
+func TestOnceOutsideTransactionRefusesToRunInsideOne(t *testing.T) {
+	// Arrange
+	in := NewInbox(sharedDB)
+	messageID := uuid.New()
+
+	// Act
+	err := sharedDB.InTx(t.Context(), func(ctx context.Context) error {
+		_, onceErr := in.OnceOutsideTransaction(ctx, "file.worker", messageID,
+			func(context.Context) error { return nil })
+
+		return onceErr
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrInvalidEffect,
+		"the guarantee is in the name, so a caller must not be able to break it quietly")
+	assert.Zero(t, processedCount(t, "file.worker", messageID))
+}
+
+func TestOnceOutsideTransactionSkipsAMessageItAlreadySaw(t *testing.T) {
+	// Arrange
+	in := NewInbox(sharedDB)
+	messageID := uuid.New()
+
+	var runs int
+
+	effect := func(context.Context) error {
+		runs++
+
+		return nil
+	}
+
+	// Act
+	first, err := in.OnceOutsideTransaction(t.Context(), "file.worker", messageID, effect)
+	require.NoError(t, err)
+
+	second, err := in.OnceOutsideTransaction(t.Context(), "file.worker", messageID, effect)
+	require.NoError(t, err)
+
+	// Assert
+	assert.True(t, first)
+	assert.False(t, second)
+	assert.Equal(t, 1, runs)
+}
+
+func TestOnceOutsideTransactionKeepsTheMessageUnmarkedWhenTheEffectFails(t *testing.T) {
+	// Arrange
+	in := NewInbox(sharedDB)
+	messageID := uuid.New()
+	broken := errors.New("s3 is unreachable")
+
+	// Act
+	applied, err := in.OnceOutsideTransaction(t.Context(), "file.worker", messageID,
+		func(context.Context) error { return broken })
+
+	// Assert
+	require.ErrorIs(t, err, broken)
+	assert.False(t, applied)
+	assert.Zero(t, processedCount(t, "file.worker", messageID),
+		"a failed effect must stay unmarked, or the retry is lost")
+}

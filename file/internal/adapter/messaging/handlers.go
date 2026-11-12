@@ -28,7 +28,7 @@ type objectDeleter interface {
 
 func CommandHandlers(processor fileProcessor, deleter objectDeleter) map[string]inbox.Handler {
 	return map[string]inbox.Handler{
-		TypeProcessFile: func(ctx context.Context, message outbox.Envelope) error {
+		TypeProcessFile: inbox.Repeatable(func(ctx context.Context, message outbox.Envelope) error {
 			var data processFileData
 
 			if err := json.Unmarshal(message.Data, &data); err != nil {
@@ -64,9 +64,9 @@ func CommandHandlers(processor fileProcessor, deleter objectDeleter) map[string]
 			})
 
 			return unprocessableIfInvalid(err)
-		},
+		}),
 
-		TypeDeleteObjects: func(ctx context.Context, message outbox.Envelope) error {
+		TypeDeleteObjects: inbox.Repeatable(func(ctx context.Context, message outbox.Envelope) error {
 			var data deleteObjectsData
 
 			if err := json.Unmarshal(message.Data, &data); err != nil {
@@ -96,7 +96,7 @@ func CommandHandlers(processor fileProcessor, deleter objectDeleter) map[string]
 			})
 
 			return unprocessableIfInvalid(err)
-		},
+		}),
 	}
 }
 

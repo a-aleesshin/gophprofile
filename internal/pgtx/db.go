@@ -38,6 +38,12 @@ func (d *DB) Querier(ctx context.Context) Querier {
 	return d.pool
 }
 
+func (d *DB) InTransaction(ctx context.Context) bool {
+	_, inside := ctx.Value(txKey{}).(pgx.Tx)
+
+	return inside
+}
+
 func (d *DB) InTx(ctx context.Context, fn func(context.Context) error) error {
 	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return fn(ctx)
