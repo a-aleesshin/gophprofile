@@ -13,10 +13,14 @@ import (
 
 var ErrInvalidConfig = errors.New("invalid grpc server config")
 
+const minTokenLength = 32
+
 type Config struct {
 	Addr            string        `env:"ADDR,required,notEmpty"`
+	Token           string        `env:"TOKEN,required,notEmpty"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
 	MaxRecvMsgSize  int           `env:"MAX_RECV_MSG_SIZE" envDefault:"4194304"`
+	MaxSendMsgSize  int           `env:"MAX_SEND_MSG_SIZE" envDefault:"4194304"`
 }
 
 type Server struct {
@@ -34,13 +38,26 @@ func New(cfg Config, logger *slog.Logger, register func(*grpc.Server)) (*Server,
 		return nil, fmt.Errorf("%w: shutdown timeout must be positive", ErrInvalidConfig)
 	case cfg.MaxRecvMsgSize <= 0:
 		return nil, fmt.Errorf("%w: max receive size must be positive", ErrInvalidConfig)
+	case cfg.MaxSendMsgSize <= 0:
+		return nil, fmt.Errorf("%w: max send size must be positive", ErrInvalidConfig)
+	case len(cfg.Token) < minTokenLength:
+		return nil, fmt.Errorf("%w: token must be at least %d bytes",
+			ErrInvalidConfig, minTokenLength)
 	case logger == nil:
 		return nil, fmt.Errorf("%w: logger is required", ErrInvalidConfig)
 	case register == nil:
 		return nil, fmt.Errorf("%w: nothing to register", ErrInvalidConfig)
 	}
 
-	server := grpc.NewServer(grpc.MaxRecvMsgSize(cfg.MaxRecvMsgSize))
+	server := grpc.NewServer(
+		grpc.MaxRecvMsgSize(cfg.MaxRecvMsgSize),
+		grpc.MaxSendMsgSize(cfg.MaxSendMsgSize),
+		grpc.ChainUnaryInterceptor(
+			recovery(logger),
+			logging(logger),
+			authorization(cfg.Token),
+		),
+	)
 
 	register(server)
 

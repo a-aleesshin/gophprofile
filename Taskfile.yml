@@ -19,7 +19,7 @@ tasks:
   test:integration:
     desc: Run the integration tests, which start containers
     cmds:
-      - '{{.GO}} test -tags=integration -count=1 -timeout=20m ./...'
+      - '{{.GO}} test -tags=integration -count=1 -timeout=20m -p 2 ./...'
 
   test:cover:
     desc: Report coverage per package

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	filev1 "github.com/a-aleesshin/gophprofile/file/gen/file/v1"
@@ -31,6 +32,8 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/logging"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
+
+const testGRPCToken = "0123456789abcdef0123456789abcdef"
 
 func serverConfig(t *testing.T) config.Server {
 	t.Helper()
@@ -70,8 +73,14 @@ func serverConfig(t *testing.T) config.Server {
 			PublicBase: "https://domain.com",
 			Secret:     "0123456789abcdef0123456789abcdef",
 		},
-		Serving:       serving.Config{Timeout: 2 * time.Second},
-		GRPC:          grpcserver.Config{Addr: freePort(t), ShutdownTimeout: time.Second, MaxRecvMsgSize: 1 << 20},
+		Serving: serving.Config{Timeout: 2 * time.Second},
+		GRPC: grpcserver.Config{
+			Addr:            freePort(t),
+			Token:           testGRPCToken,
+			ShutdownTimeout: time.Second,
+			MaxRecvMsgSize:  1 << 20,
+			MaxSendMsgSize:  1 << 20,
+		},
 		HTTP:          httpConfig(),
 		Health:        health.Config{Timeout: 2 * time.Second},
 		HealthServer:  httpConfig(),
@@ -96,7 +105,19 @@ func TestBuildServerStartsAndAnswers(t *testing.T) {
 	go func() { done <- runner.Run(ctx) }()
 
 	conn, err := grpc.NewClient(cfg.GRPC.Addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(func(
+			ctx context.Context,
+			method string,
+			request, response any,
+			cc *grpc.ClientConn,
+			invoker grpc.UnaryInvoker,
+			opts ...grpc.CallOption,
+		) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+testGRPCToken)
+
+			return invoker(ctx, method, request, response, cc, opts...)
+		}))
 	require.NoError(t, err)
 
 	t.Cleanup(func() { _ = conn.Close() })

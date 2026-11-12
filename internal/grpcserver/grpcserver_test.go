@@ -33,7 +33,13 @@ func freeAddr(t *testing.T) string {
 }
 
 func testConfig(addr string) Config {
-	return Config{Addr: addr, ShutdownTimeout: time.Second, MaxRecvMsgSize: 1 << 20}
+	return Config{
+		Addr:            addr,
+		Token:           "0123456789abcdef0123456789abcdef",
+		ShutdownTimeout: time.Second,
+		MaxRecvMsgSize:  1 << 20,
+		MaxSendMsgSize:  1 << 20,
+	}
 }
 
 func TestServerServesAndStopsOnContext(t *testing.T) {
@@ -114,18 +120,27 @@ func TestNewRejectsAnIncompleteServer(t *testing.T) {
 		register func(*grpc.Server)
 	}{
 		{
-			name:   "no address",
-			cfg:    Config{ShutdownTimeout: time.Second, MaxRecvMsgSize: 1},
+			name: "no address",
+			cfg: Config{
+				Token: "0123456789abcdef0123456789abcdef", ShutdownTimeout: time.Second,
+				MaxRecvMsgSize: 1, MaxSendMsgSize: 1,
+			},
 			logger: discard(), register: register,
 		},
 		{
-			name:   "no shutdown timeout",
-			cfg:    Config{Addr: ":0", MaxRecvMsgSize: 1},
+			name: "no shutdown timeout",
+			cfg: Config{
+				Addr: ":0", Token: "0123456789abcdef0123456789abcdef", MaxRecvMsgSize: 1,
+				MaxSendMsgSize: 1,
+			},
 			logger: discard(), register: register,
 		},
 		{
-			name:   "no receive limit",
-			cfg:    Config{Addr: ":0", ShutdownTimeout: time.Second},
+			name: "no receive limit",
+			cfg: Config{
+				Addr: ":0", Token: "0123456789abcdef0123456789abcdef",
+				ShutdownTimeout: time.Second,
+			},
 			logger: discard(), register: register,
 		},
 		{name: "no logger", cfg: testConfig(":0"), register: register},

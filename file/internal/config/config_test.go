@@ -38,6 +38,7 @@ func setServerEnv(t *testing.T) {
 	t.Setenv("LINK_PUBLIC_BASE", "https://domain.com")
 	t.Setenv("LINK_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("GRPC_ADDR", ":9090")
+	t.Setenv("GRPC_TOKEN", "fedcba9876543210fedcba9876543210")
 	t.Setenv("HTTP_ADDR", ":8080")
 	t.Setenv("HEALTH_ADDR", ":8081")
 	t.Setenv("METRICS_ADDR", ":9100")
@@ -104,6 +105,7 @@ func TestLoadServerNeedsNoBrokers(t *testing.T) {
 	assert.Empty(t, cfg.Links.PreviousSecret, "rotation is off until a second secret is set")
 
 	assert.Equal(t, ":9090", cfg.GRPC.Addr)
+	assert.Equal(t, "fedcba9876543210fedcba9876543210", cfg.GRPC.Token)
 	assert.Equal(t, 4194304, cfg.GRPC.MaxRecvMsgSize, "the default comes from the struct tag")
 	assert.Equal(t, ":8080", cfg.HTTP.Addr)
 	assert.Equal(t, 3*time.Second, cfg.Serving.Timeout)
@@ -171,6 +173,7 @@ func TestLoadServerRequiresEveryMandatoryVariable(t *testing.T) {
 		"LINK_PUBLIC_BASE",
 		"LINK_SECRET",
 		"GRPC_ADDR",
+		"GRPC_TOKEN",
 		"HTTP_ADDR",
 		"HEALTH_ADDR",
 		"METRICS_ADDR",

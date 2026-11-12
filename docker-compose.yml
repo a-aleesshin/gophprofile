@@ -140,6 +140,7 @@ services:
       PPROF_ADDR: ":6060"
       LINK_PUBLIC_BASE: ${PUBLIC_BASE:-http://localhost:8000}
       LINK_SECRET: ${LINK_SECRET:?set LINK_SECRET to at least 32 bytes}
+      GRPC_TOKEN: ${GRPC_TOKEN:?set GRPC_TOKEN to at least 32 bytes}
       LINK_PREVIOUS_SECRET: ${LINK_PREVIOUS_SECRET:-}
     depends_on:
       file-migrate:
