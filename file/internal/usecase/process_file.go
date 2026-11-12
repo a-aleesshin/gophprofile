@@ -66,12 +66,13 @@ type PutObjectParams struct {
 }
 
 type FileProcessedFact struct {
-	FileID     domain.FileID
-	OwnerRef   domain.OwnerRef
-	MimeType   domain.MimeType
-	Size       domain.Size
-	Dimensions domain.Dimensions
-	Variants   []domain.Variant
+	FileID       domain.FileID
+	OwnerRef     domain.OwnerRef
+	OriginalName domain.OriginalName
+	MimeType     domain.MimeType
+	Size         domain.Size
+	Dimensions   domain.Dimensions
+	Variants     []domain.Variant
 }
 
 type FileRejectedFact struct {
@@ -297,12 +298,13 @@ func (h *ProcessFileHandler) Handle(
 		}
 
 		return h.publisher.PublishFileProcessed(ctx, FileProcessedFact{
-			FileID:     file.ID(),
-			OwnerRef:   file.OwnerRef(),
-			MimeType:   file.MimeType(),
-			Size:       file.Size(),
-			Dimensions: content.Dimensions,
-			Variants:   variants,
+			FileID:       file.ID(),
+			OwnerRef:     file.OwnerRef(),
+			OriginalName: file.OriginalName(),
+			MimeType:     file.MimeType(),
+			Size:         file.Size(),
+			Dimensions:   content.Dimensions,
+			Variants:     variants,
 		})
 	})
 

@@ -43,13 +43,14 @@ type variantData struct {
 }
 
 type fileProcessedData struct {
-	FileID    string        `json:"file_id"`
-	OwnerRef  string        `json:"owner_ref"`
-	MimeType  string        `json:"mime_type"`
-	SizeBytes int64         `json:"size_bytes"`
-	Width     int32         `json:"width"`
-	Height    int32         `json:"height"`
-	Variants  []variantData `json:"variants"`
+	FileID       string        `json:"file_id"`
+	OwnerRef     string        `json:"owner_ref"`
+	OriginalName string        `json:"original_name"`
+	MimeType     string        `json:"mime_type"`
+	SizeBytes    int64         `json:"size_bytes"`
+	Width        int32         `json:"width"`
+	Height       int32         `json:"height"`
+	Variants     []variantData `json:"variants"`
 }
 
 type fileRejectedData struct {
@@ -135,13 +136,14 @@ func (p *Publisher) PublishFileProcessed(
 		PartitionKey: fact.FileID.String(),
 		Type:         TypeFileProcessed,
 		Data: fileProcessedData{
-			FileID:    fact.FileID.String(),
-			OwnerRef:  fact.OwnerRef.String(),
-			MimeType:  fact.MimeType.String(),
-			SizeBytes: fact.Size.Bytes(),
-			Width:     fact.Dimensions.Width(),
-			Height:    fact.Dimensions.Height(),
-			Variants:  variants,
+			FileID:       fact.FileID.String(),
+			OwnerRef:     fact.OwnerRef.String(),
+			OriginalName: fact.OriginalName.String(),
+			MimeType:     fact.MimeType.String(),
+			SizeBytes:    fact.Size.Bytes(),
+			Width:        fact.Dimensions.Width(),
+			Height:       fact.Dimensions.Height(),
+			Variants:     variants,
 		},
 	})
 }
