@@ -10,9 +10,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	filev1 "github.com/a-aleesshin/gophprofile/file/gen/file/v1"
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
-	filev1 "github.com/a-aleesshin/gophprofile/gen/file/v1"
 )
 
 var ErrIncompleteServer = errors.New("incomplete grpc server")

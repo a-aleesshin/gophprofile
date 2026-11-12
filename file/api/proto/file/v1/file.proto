@@ -4,7 +4,7 @@ package gophprofile.file.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/a-aleesshin/gophprofile/gen/file/v1;filev1";
+option go_package = "github.com/a-aleesshin/gophprofile/file/gen/file/v1;filev1";
 
 service FileService {
   rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);

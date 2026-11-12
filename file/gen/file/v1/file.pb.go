@@ -1010,7 +1010,7 @@ const file_file_v1_file_proto_rawDesc = "" +
 	"\bGetFiles\x12$.gophprofile.file.v1.GetFilesRequest\x1a%.gophprofile.file.v1.GetFilesResponse\x12o\n" +
 	"\x10CreateAccessLink\x12,.gophprofile.file.v1.CreateAccessLinkRequest\x1a-.gophprofile.file.v1.CreateAccessLinkResponse\x12]\n" +
 	"\n" +
-	"DeleteFile\x12&.gophprofile.file.v1.DeleteFileRequest\x1a'.gophprofile.file.v1.DeleteFileResponseB7Z5github.com/a-aleesshin/gophprofile/gen/file/v1;filev1b\x06proto3"
+	"DeleteFile\x12&.gophprofile.file.v1.DeleteFileRequest\x1a'.gophprofile.file.v1.DeleteFileResponseB<Z:github.com/a-aleesshin/gophprofile/file/gen/file/v1;filev1b\x06proto3"
 
 var (
 	file_file_v1_file_proto_rawDescOnce sync.Once
