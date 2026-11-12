@@ -4,6 +4,7 @@ CREATE EXTENSION IF NOT EXISTS citext;
 
 CREATE TABLE profiles (
     user_id           VARCHAR(255) PRIMARY KEY,
+    version           INTEGER      NOT NULL DEFAULT 1,
     email             CITEXT UNIQUE,
     email_sha256      CHAR(64) UNIQUE,
     current_avatar_id UUID,
@@ -38,7 +39,7 @@ ALTER TABLE profiles
     ADD CONSTRAINT fk_profiles_current_avatar
     FOREIGN KEY (current_avatar_id) REFERENCES avatars (id);
 
-CREATE INDEX idx_avatars_user ON avatars (user_id, created_at DESC)
+CREATE INDEX idx_avatars_user ON avatars (user_id, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_avatars_pending ON avatars (updated_at)

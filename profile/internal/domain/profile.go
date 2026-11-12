@@ -9,11 +9,13 @@ import (
 var (
 	ErrInvalidProfile  = errors.New("invalid profile")
 	ErrProfileNotFound = errors.New("profile not found")
+	ErrProfileExists   = errors.New("profile already exists")
 	ErrEmailTaken      = errors.New("email belongs to another profile")
 )
 
 type Profile struct {
 	userID          UserID
+	version         int64
 	email           Email
 	emailHash       EmailHash
 	currentAvatarID AvatarID
@@ -29,11 +31,17 @@ func NewProfile(userID UserID, now time.Time) (Profile, error) {
 		return Profile{}, fmt.Errorf("%w: creation time is required", ErrInvalidProfile)
 	}
 
-	return Profile{userID: userID, createdAt: now.UTC(), updatedAt: now.UTC()}, nil
+	return Profile{
+		userID:    userID,
+		version:   1,
+		createdAt: now.UTC(),
+		updatedAt: now.UTC(),
+	}, nil
 }
 
 type RestoreProfileParams struct {
 	UserID          UserID
+	Version         int64
 	Email           Email
 	EmailHash       EmailHash
 	CurrentAvatarID AvatarID
@@ -42,8 +50,12 @@ type RestoreProfileParams struct {
 }
 
 func RestoreProfile(p RestoreProfileParams) (Profile, error) {
-	if p.UserID.IsZero() {
+	switch {
+	case p.UserID.IsZero():
 		return Profile{}, fmt.Errorf("%w: user id is required", ErrInvalidProfile)
+	case p.Version <= 0:
+		return Profile{}, fmt.Errorf("%w: version must be positive (got %d)",
+			ErrInvalidProfile, p.Version)
 	}
 
 	if p.Email.IsZero() != p.EmailHash.IsZero() {
@@ -58,6 +70,7 @@ func RestoreProfile(p RestoreProfileParams) (Profile, error) {
 
 	return Profile{
 		userID:          p.UserID,
+		version:         p.Version,
 		email:           p.Email,
 		emailHash:       p.EmailHash,
 		currentAvatarID: p.CurrentAvatarID,
@@ -67,6 +80,8 @@ func RestoreProfile(p RestoreProfileParams) (Profile, error) {
 }
 
 func (p *Profile) UserID() UserID { return p.userID }
+
+func (p *Profile) Version() int64 { return p.version }
 
 func (p *Profile) Email() Email { return p.email }
 
@@ -79,6 +94,16 @@ func (p *Profile) CreatedAt() time.Time { return p.createdAt }
 func (p *Profile) UpdatedAt() time.Time { return p.updatedAt }
 
 func (p *Profile) HasEmail() bool { return !p.email.IsZero() }
+
+func (p *Profile) SetVersion(version int64) error {
+	if version <= 0 {
+		return fmt.Errorf("%w: version must be positive (got %d)", ErrInvalidProfile, version)
+	}
+
+	p.version = version
+
+	return nil
+}
 
 func (p *Profile) SetEmail(email Email, now time.Time) error {
 	switch {

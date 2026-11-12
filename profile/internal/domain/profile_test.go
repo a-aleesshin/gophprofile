@@ -100,6 +100,10 @@ func TestRestoreProfileCatchesADriftedHash(t *testing.T) {
 			name:   "no user",
 			mutate: func(p *RestoreProfileParams) { p.UserID = UserID{} },
 		},
+		{
+			name:   "no version",
+			mutate: func(p *RestoreProfileParams) { p.Version = 0 },
+		},
 	}
 
 	for _, test := range tests {
@@ -107,7 +111,7 @@ func TestRestoreProfileCatchesADriftedHash(t *testing.T) {
 			t.Parallel()
 
 			params := RestoreProfileParams{
-				UserID: testUserID(t), CreatedAt: testNow, UpdatedAt: testNow,
+				UserID: testUserID(t), Version: 1, CreatedAt: testNow, UpdatedAt: testNow,
 			}
 			test.mutate(&params)
 
@@ -129,6 +133,7 @@ func TestRestoreProfileAcceptsAMatchingPair(t *testing.T) {
 	// Act
 	profile, err := RestoreProfile(RestoreProfileParams{
 		UserID:    testUserID(t),
+		Version:   3,
 		Email:     email,
 		EmailHash: email.Hash(),
 		CreatedAt: testNow,
@@ -138,4 +143,6 @@ func TestRestoreProfileAcceptsAMatchingPair(t *testing.T) {
 	// Assert
 	require.NoError(t, err)
 	assert.True(t, profile.HasEmail())
+	assert.Equal(t, int64(3), profile.Version(),
+		"the version comes from the row, it is not reset on reconstitution")
 }
