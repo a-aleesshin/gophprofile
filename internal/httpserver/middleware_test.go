@@ -268,7 +268,7 @@ func (w *countingWriter) Write(body []byte) (int, error) {
 func (w *countingWriter) ReadFrom(src io.Reader) (int64, error) {
 	w.readFroms++
 
-	return io.Copy(w.ResponseRecorder.Body, src)
+	return io.Copy(w.Body, src)
 }
 
 type plainReader struct{ io.Reader }

@@ -153,7 +153,8 @@ func serve(t *testing.T, logs *safeBuffer, service *echo) *grpc.ClientConn {
 
 	t.Cleanup(func() {
 		cancel()
-		<-done
+
+		assert.ErrorIs(t, <-done, context.Canceled)
 	})
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))

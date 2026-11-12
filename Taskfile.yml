@@ -37,6 +37,12 @@ tasks:
       - '{{.GO}} vet ./...'
       - '{{.GO}} vet -tags=integration ./...'
 
+  lint:
+    desc: Run golangci-lint with and without the integration tag
+    cmds:
+      - golangci-lint run ./...
+      - golangci-lint run --build-tags=integration ./...
+
   generate:
     desc: Regenerate the protobuf code
     cmds:

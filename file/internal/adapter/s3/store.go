@@ -110,6 +110,10 @@ func (s *Store) PresignUpload(
 		return usecase.PresignedUpload{}, fmt.Errorf("presign post policy: %w", err)
 	}
 
+	if params.ContentType != "" {
+		formData["Content-Type"] = params.ContentType
+	}
+
 	public, err := url.JoinPath(s.publicBase, endpoint.Path)
 	if err != nil {
 		return usecase.PresignedUpload{}, fmt.Errorf("join public base: %w", err)

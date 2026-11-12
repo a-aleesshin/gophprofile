@@ -892,9 +892,8 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
-	ids := make([]int64, 0, 5)
 	for n := range 5 {
-		ids = append(ids, insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now))
+		insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now)
 	}
 
 	_, err := sharedDB.Pool().Exec(context.Background(),

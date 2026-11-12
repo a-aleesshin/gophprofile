@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -253,6 +254,7 @@ func TestStore_PresignUploadEnforcesThePolicy(t *testing.T) {
 	presigned, err := store.PresignUpload(ctx, usecase.PresignUploadParams{
 		Location:          key,
 		MaxSizeBytes:      maxSize,
+		ContentType:       "image/jpeg",
 		ContentTypePrefix: "image/",
 		ExpiresAt:         time.Now().Add(10 * time.Minute),
 	})
@@ -262,8 +264,8 @@ func TestStore_PresignUploadEnforcesThePolicy(t *testing.T) {
 	require.NotEmpty(t, presigned.Fields)
 	assert.Equal(t, key.String(), presigned.Fields["key"],
 		"the key is fixed by the policy, so a client cannot write anywhere else")
-	assert.Equal(t, "image/", presigned.Fields["Content-Type"],
-		"the prefix condition seeds the field; a client overwrites it and must not append a second value")
+	assert.Equal(t, "image/jpeg", presigned.Fields["Content-Type"],
+		"the field carries the declared type; the policy prefix alone is not a media type")
 
 	t.Run("within the limit is accepted", func(t *testing.T) {
 		status, payload := postPresigned(t, presigned, bytes.Repeat([]byte("a"), 512), "image/jpeg")
@@ -284,6 +286,39 @@ func TestStore_PresignUploadEnforcesThePolicy(t *testing.T) {
 		status, _ := postPresigned(t, presigned, []byte("short"), "application/pdf")
 		assert.GreaterOrEqual(t, status, 400)
 	})
+}
+
+func TestStore_PresignedFormWorksExactlyAsHandedOut(t *testing.T) {
+	t.Parallel()
+
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+
+	key := testLocation(t, "staging/verbatim-ticket")
+
+	presigned, err := store.PresignUpload(ctx, usecase.PresignUploadParams{
+		Location:          key,
+		MaxSizeBytes:      1024,
+		ContentType:       "image/jpeg",
+		ContentTypePrefix: "image/",
+		ExpiresAt:         time.Now().Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	// Act: every field exactly as the ticket handed it over, which is all a
+	// browser or any other client does.
+	status, payload := postPresigned(t, presigned, bytes.Repeat([]byte("a"), 512), "")
+	require.Equal(t, http.StatusNoContent, status, "minio said: %s", payload)
+
+	// Assert
+	info, err := store.Head(ctx, key)
+	require.NoError(t, err)
+
+	assert.Equal(t, "image/jpeg", info.ContentType)
+
+	_, _, err = mime.ParseMediaType(info.ContentType)
+	require.NoError(t, err,
+		"CompleteUpload parses what Head returns, and it refuses the whole upload if it cannot")
 }
 
 func TestStore_PresignUploadUsesThePublicBase(t *testing.T) {

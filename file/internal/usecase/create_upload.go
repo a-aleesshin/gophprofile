@@ -26,6 +26,7 @@ type UploadPolicy struct {
 type PresignUploadParams struct {
 	Location          domain.Location
 	MaxSizeBytes      int64
+	ContentType       string
 	ContentTypePrefix string
 	ExpiresAt         time.Time
 }
@@ -160,6 +161,7 @@ func (h *CreateUploadHandler) Handle(
 		presigned, signErr := h.presigner.PresignUpload(ctx, PresignUploadParams{
 			Location:          candidate.Location(),
 			MaxSizeBytes:      candidate.MaxSize().Bytes(),
+			ContentType:       candidate.DeclaredMime().String(),
 			ContentTypePrefix: policy.ContentTypePrefix,
 			ExpiresAt:         candidate.ExpiresAt(),
 		})
@@ -192,6 +194,7 @@ func (h *CreateUploadHandler) Handle(
 		signature, err = h.presigner.PresignUpload(ctx, PresignUploadParams{
 			Location:          upload.Location(),
 			MaxSizeBytes:      upload.MaxSize().Bytes(),
+			ContentType:       upload.DeclaredMime().String(),
 			ContentTypePrefix: policy.ContentTypePrefix,
 			ExpiresAt:         upload.ExpiresAt(),
 		})
