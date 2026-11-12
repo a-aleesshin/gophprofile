@@ -18,6 +18,11 @@ var (
 	ErrTooManyAvatars      = errors.New("the user has too many avatars")
 	ErrForbidden           = errors.New("the avatar belongs to another user")
 	ErrStaleVersion        = errors.New("aggregate was modified concurrently")
+
+	ErrUploadNotFound         = errors.New("the file service has no such upload")
+	ErrUploadNotUsable        = errors.New("the upload cannot be completed")
+	ErrFileServiceUnavailable = errors.New("the file service is unavailable")
+	ErrFileServiceTimeout     = errors.New("the file service did not answer in time")
 )
 
 type UploadPolicy struct {

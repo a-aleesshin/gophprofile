@@ -9,13 +9,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/a-aleesshin/gophprofile/internal/clock"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
-
-type systemClock struct{}
-
-func (systemClock) Now() time.Time { return time.Now().UTC() }
 
 type testURLs struct{}
 
@@ -29,7 +26,7 @@ func TestBindEmailRunsAgainstPostgres(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
-	handler := usecase.NewBindEmailHandler(NewProfiles(sharedDB), sharedDB, systemClock{})
+	handler := usecase.NewBindEmailHandler(NewProfiles(sharedDB), sharedDB, clock.System{})
 	user := testUserID(t)
 	email := testEmail(t)
 
