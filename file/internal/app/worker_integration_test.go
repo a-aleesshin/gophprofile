@@ -218,6 +218,7 @@ func workerConfig(t *testing.T) config.Worker {
 			MinBackoff:             time.Second,
 			MaxBackoff:             30 * time.Second,
 			MaxConsecutiveFailures: 3,
+			Lease:                  30 * time.Second,
 		},
 		Jobs: config.Jobs{
 			ReconcileInterval: time.Minute,

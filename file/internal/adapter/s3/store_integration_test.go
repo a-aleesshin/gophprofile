@@ -23,6 +23,7 @@ import (
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
+	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
 const testImage = "minio/minio:latest"
@@ -80,7 +81,7 @@ func newTestStore(t *testing.T) (*Store, Config) {
 		Region:     "us-east-1",
 	}
 
-	store, err := New(cfg)
+	store, err := New(cfg, pgtx.New(nil))
 	require.NoError(t, err)
 
 	return store, cfg
@@ -293,7 +294,7 @@ func TestStore_PresignUploadUsesThePublicBase(t *testing.T) {
 
 	cfg.PublicBase = "https://domain.com/s3"
 
-	rewritten, err := New(cfg)
+	rewritten, err := New(cfg, pgtx.New(nil))
 	require.NoError(t, err)
 
 	presigned, err := rewritten.PresignUpload(ctx, usecase.PresignUploadParams{
@@ -333,11 +334,11 @@ func TestNew_RejectsIncompleteConfig(t *testing.T) {
 			cfg := full
 			tt.mutate(&cfg)
 
-			_, err := New(cfg)
+			_, err := New(cfg, pgtx.New(nil))
 			require.ErrorIs(t, err, ErrInvalidConfig)
 		})
 	}
 
-	_, err := New(full)
+	_, err := New(full, pgtx.New(nil))
 	require.NoError(t, err)
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
 )
 
+var ErrInTransaction = errors.New("object io must not run inside a database transaction")
+
 var ErrInvalidConfig = errors.New("invalid s3 config")
 
 type Config struct {
@@ -27,13 +29,22 @@ type Config struct {
 	UseSSL     bool   `env:"USE_SSL" envDefault:"false"`
 }
 
+type TransactionGuard interface {
+	InTransaction(ctx context.Context) bool
+}
+
 type Store struct {
 	client     *minio.Client
 	bucket     string
+	guard      TransactionGuard
 	publicBase string
 }
 
-func New(cfg Config) (*Store, error) {
+func New(cfg Config, guard TransactionGuard) (*Store, error) {
+	if guard == nil {
+		return nil, fmt.Errorf("%w: transaction guard is required", ErrInvalidConfig)
+	}
+
 	switch {
 	case cfg.Endpoint == "":
 		return nil, fmt.Errorf("%w: endpoint is required", ErrInvalidConfig)
@@ -58,7 +69,12 @@ func New(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("new minio client: %w", err)
 	}
 
-	return &Store{client: client, bucket: cfg.Bucket, publicBase: cfg.PublicBase}, nil
+	return &Store{
+		client:     client,
+		bucket:     cfg.Bucket,
+		publicBase: cfg.PublicBase,
+		guard:      guard,
+	}, nil
 }
 
 func (s *Store) PresignUpload(
@@ -103,6 +119,10 @@ func (s *Store) PresignUpload(
 }
 
 func (s *Store) Ping(ctx context.Context) error {
+	if s.guard.InTransaction(ctx) {
+		return fmt.Errorf("%w: ping object", ErrInTransaction)
+	}
+
 	exists, err := s.client.BucketExists(ctx, s.bucket)
 	if err != nil {
 		return fmt.Errorf("check bucket %s: %w", s.bucket, err)
@@ -119,6 +139,10 @@ func (s *Store) Head(
 	ctx context.Context,
 	location domain.Location,
 ) (usecase.ObjectInfo, error) {
+	if s.guard.InTransaction(ctx) {
+		return usecase.ObjectInfo{}, fmt.Errorf("%w: head object", ErrInTransaction)
+	}
+
 	info, err := s.client.StatObject(ctx, s.bucket, location.String(), minio.StatObjectOptions{})
 	if err != nil {
 		if minio.ToErrorResponse(err).StatusCode == http.StatusNotFound {
@@ -134,6 +158,10 @@ func (s *Store) Head(
 }
 
 func (s *Store) Get(ctx context.Context, location domain.Location) (io.ReadCloser, error) {
+	if s.guard.InTransaction(ctx) {
+		return nil, fmt.Errorf("%w: get object", ErrInTransaction)
+	}
+
 	object, err := s.client.GetObject(ctx, s.bucket, location.String(), minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get %q: %w", location.String(), err)
@@ -153,6 +181,10 @@ func (s *Store) Get(ctx context.Context, location domain.Location) (io.ReadClose
 }
 
 func (s *Store) Put(ctx context.Context, params usecase.PutObjectParams) error {
+	if s.guard.InTransaction(ctx) {
+		return fmt.Errorf("%w: put object", ErrInTransaction)
+	}
+
 	_, err := s.client.PutObject(
 		ctx,
 		s.bucket,
@@ -169,6 +201,10 @@ func (s *Store) Put(ctx context.Context, params usecase.PutObjectParams) error {
 }
 
 func (s *Store) Copy(ctx context.Context, from, to domain.Location) error {
+	if s.guard.InTransaction(ctx) {
+		return fmt.Errorf("%w: copy object", ErrInTransaction)
+	}
+
 	_, err := s.client.CopyObject(
 		ctx,
 		minio.CopyDestOptions{Bucket: s.bucket, Object: to.String()},
@@ -182,6 +218,10 @@ func (s *Store) Copy(ctx context.Context, from, to domain.Location) error {
 }
 
 func (s *Store) Delete(ctx context.Context, locations ...domain.Location) error {
+	if s.guard.InTransaction(ctx) {
+		return fmt.Errorf("%w: delete object", ErrInTransaction)
+	}
+
 	if len(locations) == 0 {
 		return nil
 	}

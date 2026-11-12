@@ -16,6 +16,7 @@ import (
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
+	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
 const (
@@ -79,7 +80,7 @@ func setup(t *testing.T) (*amqp.Connection, Config, *Publisher, *Consumer) {
 
 	require.NoError(t, Declare(t.Context(), conn, cfg, []string{testRoutingKey}))
 
-	publisher, err := NewPublisher(conn, cfg)
+	publisher, err := NewPublisher(conn, cfg, pgtx.New(nil))
 	require.NoError(t, err)
 
 	t.Cleanup(func() { _ = publisher.Close() })

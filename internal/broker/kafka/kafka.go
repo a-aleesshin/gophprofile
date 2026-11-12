@@ -15,6 +15,7 @@ import (
 var (
 	ErrInvalidConfig  = errors.New("invalid kafka config")
 	ErrNoPartitionKey = errors.New("a fact without a partition key would lose its order")
+	ErrInTransaction  = errors.New("a broker call must not run inside a database transaction")
 )
 
 type Config struct {
@@ -24,13 +25,21 @@ type Config struct {
 	RetryBackoff time.Duration `env:"RETRY_BACKOFF" envDefault:"1s"`
 }
 
-type Producer struct {
-	client *kgo.Client
+type TransactionGuard interface {
+	InTransaction(ctx context.Context) bool
 }
 
-func NewProducer(cfg Config) (*Producer, error) {
-	if len(cfg.Brokers) == 0 {
+type Producer struct {
+	client *kgo.Client
+	guard  TransactionGuard
+}
+
+func NewProducer(cfg Config, guard TransactionGuard) (*Producer, error) {
+	switch {
+	case len(cfg.Brokers) == 0:
 		return nil, fmt.Errorf("%w: at least one broker is required", ErrInvalidConfig)
+	case guard == nil:
+		return nil, fmt.Errorf("%w: transaction guard is required", ErrInvalidConfig)
 	}
 
 	client, err := kgo.NewClient(
@@ -42,10 +51,14 @@ func NewProducer(cfg Config) (*Producer, error) {
 		return nil, fmt.Errorf("open kafka producer: %w", err)
 	}
 
-	return &Producer{client: client}, nil
+	return &Producer{client: client, guard: guard}, nil
 }
 
 func (p *Producer) Send(ctx context.Context, message outbox.Pending) error {
+	if p.guard.InTransaction(ctx) {
+		return fmt.Errorf("%w: producing %s", ErrInTransaction, message.Type)
+	}
+
 	if message.PartitionKey == "" {
 		return fmt.Errorf("%w: %s", ErrNoPartitionKey, message.Type)
 	}

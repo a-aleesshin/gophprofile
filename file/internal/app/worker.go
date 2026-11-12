@@ -62,7 +62,7 @@ func BuildWorker(
 
 	db := pgtx.New(pool)
 
-	store, err := s3.New(cfg.S3)
+	store, err := s3.New(cfg.S3, db)
 	if err != nil {
 		return fail(fmt.Errorf("open object storage: %w", err))
 	}
@@ -106,14 +106,14 @@ func BuildWorker(
 		return fail(fmt.Errorf("declare rabbitmq topology: %w", err))
 	}
 
-	rabbitPublisher, err := rabbitmq.NewPublisher(connection, cfg.Rabbit)
+	rabbitPublisher, err := rabbitmq.NewPublisher(connection, cfg.Rabbit, db)
 	if err != nil {
 		return fail(fmt.Errorf("open rabbitmq publisher: %w", err))
 	}
 
 	closers = append(closers, func() { _ = rabbitPublisher.Close() })
 
-	kafkaProducer, err := kafka.NewProducer(cfg.Kafka)
+	kafkaProducer, err := kafka.NewProducer(cfg.Kafka, db)
 	if err != nil {
 		return fail(fmt.Errorf("open kafka producer: %w", err))
 	}

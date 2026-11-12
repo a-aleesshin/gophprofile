@@ -17,6 +17,7 @@ import (
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
+	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
 var brokers []string
@@ -79,7 +80,7 @@ func setup(t *testing.T) (Config, *Producer, *Consumer) {
 
 	cfg := testConfig(t, testTopic(t))
 
-	producer, err := NewProducer(cfg)
+	producer, err := NewProducer(cfg, pgtx.New(nil))
 	require.NoError(t, err)
 
 	t.Cleanup(producer.Close)

@@ -72,12 +72,12 @@ type recordingSender struct {
 	failOn   int
 	failAll  bool
 	err      error
-	before   func(Pending)
+	before   func(context.Context, Pending)
 }
 
-func (s *recordingSender) Send(_ context.Context, message Pending) error {
+func (s *recordingSender) Send(ctx context.Context, message Pending) error {
 	if s.before != nil {
-		s.before(message)
+		s.before(ctx, message)
 	}
 
 	s.attempts++
@@ -163,6 +163,7 @@ func testRelay(
 		MinBackoff:             time.Second,
 		MaxBackoff:             time.Minute,
 		MaxConsecutiveFailures: 3,
+		Lease:                  30 * time.Second,
 	}
 
 	if mutate != nil {
@@ -393,7 +394,7 @@ func TestRelayRespectsTheBatchSize(t *testing.T) {
 	assert.Nil(t, readRow(t, ids[2]).PublishedAt)
 }
 
-func TestRelaySkipsRowsLockedByAnotherRelay(t *testing.T) {
+func TestRelaySkipsRowsAnotherRelayIsAlreadySending(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
 
@@ -401,14 +402,14 @@ func TestRelaySkipsRowsLockedByAnotherRelay(t *testing.T) {
 	due := now.Add(-time.Minute)
 
 	ids := make([]int64, 0, 4)
-	for range 4 {
-		ids = append(ids, insertPending(t, TransportKafka, "file-1", 0, due))
+	for n := range 4 {
+		ids = append(ids, insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, due))
 	}
 
 	claimed := make(chan struct{})
 	release := make(chan struct{})
 
-	blocking := &recordingSender{before: func(Pending) {
+	blocking := &recordingSender{before: func(context.Context, Pending) {
 		close(claimed)
 		<-release
 	}}
@@ -431,7 +432,8 @@ func TestRelaySkipsRowsLockedByAnotherRelay(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, RelayStats{Published: 3}, stats)
+	assert.Equal(t, RelayStats{Published: 3}, stats,
+		"the leased message belongs to the relay that took it, the rest are free")
 
 	close(release)
 	assert.Equal(t, RelayStats{Published: 1}, <-done)
@@ -627,7 +629,7 @@ func TestRelayRecordsEveryFailureInTheBatch(t *testing.T) {
 	}
 }
 
-func TestRelayRollsBackTheTickWhenTheContextIsCancelled(t *testing.T) {
+func TestRelayRecordsWhatItSentWhenTheContextIsCancelled(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
 
@@ -641,7 +643,7 @@ func TestRelayRollsBackTheTickWhenTheContextIsCancelled(t *testing.T) {
 	defer cancel()
 
 	sender := &recordingSender{failOn: 2, err: errors.New("connection closed")}
-	sender.before = func(Pending) {
+	sender.before = func(context.Context, Pending) {
 		if sender.attempts == 1 {
 			cancel()
 		}
@@ -656,12 +658,18 @@ func TestRelayRollsBackTheTickWhenTheContextIsCancelled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorContains(t, err, "connection closed")
 
-	for _, id := range []int64{first, second} {
-		row := readRow(t, id)
-		assert.Nil(t, row.PublishedAt, "message %d must stay unpublished", id)
-		assert.Zero(t, row.Attempts, "message %d must not be penalised by a shutdown", id)
-		assert.Nil(t, row.LastError)
-	}
+	sent := readRow(t, first)
+	require.NotNil(t, sent.PublishedAt,
+		"the first message reached the broker, and re-sending what we know went out is worse "+
+			"than recording it during a shutdown")
+	assert.Equal(t, now, sent.PublishedAt.UTC())
+
+	stopped := readRow(t, second)
+	assert.Nil(t, stopped.PublishedAt)
+	assert.Zero(t, stopped.Attempts, "a shutdown is not a delivery failure")
+	assert.Nil(t, stopped.LastError)
+	assert.Equal(t, due, stopped.AvailableAt.UTC(),
+		"its own schedule is restored, so the next run picks it up at once")
 }
 
 func TestRelayStopsTheTickWhenFailuresRunInARow(t *testing.T) {
@@ -716,4 +724,126 @@ func TestRelayKeepsGoingPastAnIsolatedFailure(t *testing.T) {
 		"one bad message among healthy ones must not cut the batch short")
 	assert.Nil(t, readRow(t, ids[1]).PublishedAt)
 	assert.NotNil(t, readRow(t, ids[9]).PublishedAt)
+}
+
+func TestRelayPublishesOutsideAnyTransaction(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	id := insertPending(t, TransportKafka, "file-1", 0, now.Add(-time.Minute))
+
+	var (
+		insideTransaction bool
+		leaseWhileSending time.Time
+	)
+
+	sender := &recordingSender{before: func(ctx context.Context, _ Pending) {
+		insideTransaction = sharedDB.InTransaction(ctx)
+		leaseWhileSending = readRow(t, id).AvailableAt.UTC()
+	}}
+
+	relay := testRelay(t, TransportKafka, sender, now, func(c *RelayConfig) {
+		c.Lease = time.Minute
+	})
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 1}, stats)
+
+	assert.False(t, insideTransaction)
+	assert.Equal(t, now.Add(time.Minute), leaseWhileSending,
+		"the lease is committed before the send, so no transaction is open while the broker answers")
+
+	row := readRow(t, id)
+	require.NotNil(t, row.PublishedAt)
+	assert.Equal(t, now, row.PublishedAt.UTC())
+}
+
+func TestRelayLeaseHoldsTheScopeForAnotherRelay(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+
+	first := insertPending(t, TransportKafka, "file-1", 0, due)
+	second := insertPending(t, TransportKafka, "file-1", 0, due)
+	other := insertPending(t, TransportKafka, "file-2", 0, due)
+
+	claimed := make(chan struct{})
+	release := make(chan struct{})
+
+	slow := &recordingSender{before: func(context.Context, Pending) {
+		close(claimed)
+		<-release
+	}}
+
+	leasing := testRelay(t, TransportKafka, slow, now, func(c *RelayConfig) {
+		c.BatchSize = 1
+		c.Lease = time.Minute
+	})
+
+	done := make(chan RelayStats, 1)
+
+	go func() {
+		stats, tickErr := leasing.Tick(context.Background())
+		assert.NoError(t, tickErr)
+		done <- stats
+	}()
+
+	<-claimed
+
+	// Act
+	second2, err := testRelay(t, TransportKafka, &recordingSender{}, now, nil).
+		Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 1}, second2,
+		"the leased row holds its scope, so only the unrelated file goes out")
+	assert.NotNil(t, readRow(t, other).PublishedAt)
+	assert.Nil(t, readRow(t, second).PublishedAt,
+		"the second message of a leased file must wait for its predecessor")
+
+	close(release)
+	assert.Equal(t, RelayStats{Published: 1}, <-done)
+	assert.NotNil(t, readRow(t, first).PublishedAt)
+}
+
+func TestRelayRetriesALeasedMessageAfterTheLeaseExpires(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	id := insertPending(t, TransportKafka, "file-1", 0, now.Add(-time.Minute))
+
+	abandoned := testRelay(t, TransportKafka, &recordingSender{}, now, func(c *RelayConfig) {
+		c.Lease = time.Minute
+	})
+
+	leased, err := abandoned.lease(context.Background(), now)
+	require.NoError(t, err)
+	require.Len(t, leased, 1, "the row is leased and the worker then dies before settling")
+
+	// Act
+	tooEarly, err := testRelay(t, TransportKafka, &recordingSender{},
+		now.Add(30*time.Second), nil).Tick(context.Background())
+	require.NoError(t, err)
+
+	sender := &recordingSender{}
+
+	afterLease, err := testRelay(t, TransportKafka, sender,
+		now.Add(2*time.Minute), nil).Tick(context.Background())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, RelayStats{}, tooEarly, "within the lease nobody else touches it")
+	assert.Equal(t, RelayStats{Published: 1}, afterLease,
+		"once the lease expires the message is published again, which processed_messages absorbs")
+	assert.Len(t, sender.sent, 1)
+	assert.NotNil(t, readRow(t, id).PublishedAt)
 }

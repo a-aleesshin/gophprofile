@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const settleTimeout = 10 * time.Second
+
 type claimed struct {
 	Pending
 	availableAt time.Time
@@ -21,11 +23,46 @@ type failure struct {
 }
 
 func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
-	var stats RelayStats
+	now := r.clock.Now()
+
+	leased, err := r.lease(ctx, now)
+	if err != nil {
+		return RelayStats{}, err
+	}
+
+	if len(leased) == 0 {
+		return RelayStats{}, nil
+	}
+
+	published, failures, sendErr := r.publish(ctx, leased)
+
+	untouched := untouchedOf(leased, published, failures)
+
+	settleCtx := ctx
+
+	if sendErr != nil {
+		detached, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), settleTimeout)
+		defer cancel()
+
+		settleCtx = detached
+	}
+
+	if err := r.settle(settleCtx, now, published, failures, untouched); err != nil {
+		return RelayStats{}, err
+	}
+
+	if sendErr != nil {
+		return RelayStats{}, sendErr
+	}
+
+	return RelayStats{Published: len(published), Failed: len(failures)}, nil
+}
+
+func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
+	var eligible []claimed
 
 	err := r.db.InTx(ctx, func(ctx context.Context) error {
-		now := r.clock.Now()
-
 		rows, err := r.db.Querier(ctx).Query(ctx, `
 			SELECT id, destination, partition_key, message_type, payload,
 				attempts, available_at
@@ -61,20 +98,10 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 			return fmt.Errorf("read outbox batch: %w", err)
 		}
 
-		if len(pending) == 0 {
-			return nil
-		}
-
-		published := make([]int64, 0, len(pending))
-		failures := make([]failure, 0, len(pending))
 		blocked := make(map[string]struct{}, len(pending))
-		consecutive := 0
+		eligible = make([]claimed, 0, len(pending))
 
 		for _, message := range pending {
-			if consecutive >= r.cfg.MaxConsecutiveFailures {
-				break
-			}
-
 			scope := scopeOf(message)
 
 			if _, stop := blocked[scope]; stop {
@@ -87,20 +114,120 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 				continue
 			}
 
-			if sendErr := r.sender.Send(ctx, message.Pending); sendErr != nil {
-				if ctx.Err() != nil {
-					return errors.Join(sendErr, ctx.Err())
-				}
+			eligible = append(eligible, message)
+		}
 
-				blocked[scope] = struct{}{}
-				failures = append(failures, failure{message: message, err: sendErr})
-				consecutive++
+		if len(eligible) == 0 {
+			return nil
+		}
 
-				continue
+		ids := make([]int64, 0, len(eligible))
+		for _, message := range eligible {
+			ids = append(ids, message.ID)
+		}
+
+		if _, err := r.db.Querier(ctx).Exec(ctx, `
+			UPDATE outbox SET available_at = $2 WHERE id = ANY($1)`,
+			ids, now.Add(r.cfg.Lease)); err != nil {
+			return fmt.Errorf("lease outbox batch: %w", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return eligible, nil
+}
+
+func (r *Relay) publish(ctx context.Context, leased []claimed) ([]int64, []failure, error) {
+	published := make([]int64, 0, len(leased))
+	failures := make([]failure, 0, len(leased))
+	blocked := make(map[string]struct{}, len(leased))
+	consecutive := 0
+
+	for _, message := range leased {
+		if consecutive >= r.cfg.MaxConsecutiveFailures {
+			break
+		}
+
+		scope := scopeOf(message)
+
+		if _, stop := blocked[scope]; stop {
+			continue
+		}
+
+		if sendErr := r.sender.Send(ctx, message.Pending); sendErr != nil {
+			if ctx.Err() != nil {
+				return published, failures, errors.Join(sendErr, ctx.Err())
 			}
 
-			consecutive = 0
-			published = append(published, message.ID)
+			blocked[scope] = struct{}{}
+			failures = append(failures, failure{message: message, err: sendErr})
+			consecutive++
+
+			continue
+		}
+
+		consecutive = 0
+		published = append(published, message.ID)
+	}
+
+	return published, failures, nil
+}
+
+func untouchedOf(leased []claimed, published []int64, failures []failure) []claimed {
+	settled := make(map[int64]struct{}, len(published)+len(failures))
+
+	for _, id := range published {
+		settled[id] = struct{}{}
+	}
+
+	for _, item := range failures {
+		settled[item.message.ID] = struct{}{}
+	}
+
+	untouched := make([]claimed, 0, len(leased))
+
+	for _, message := range leased {
+		if _, done := settled[message.ID]; !done {
+			untouched = append(untouched, message)
+		}
+	}
+
+	return untouched
+}
+
+func (r *Relay) settle(
+	ctx context.Context,
+	now time.Time,
+	published []int64,
+	failures []failure,
+	untouched []claimed,
+) error {
+	if len(published) == 0 && len(failures) == 0 && len(untouched) == 0 {
+		return nil
+	}
+
+	return r.db.InTx(ctx, func(ctx context.Context) error {
+		if len(untouched) > 0 {
+			ids := make([]int64, 0, len(untouched))
+			schedule := make([]time.Time, 0, len(untouched))
+
+			for _, message := range untouched {
+				ids = append(ids, message.ID)
+				schedule = append(schedule, message.availableAt)
+			}
+
+			if _, err := r.db.Querier(ctx).Exec(ctx, `
+				UPDATE outbox AS o
+				   SET available_at = f.available_at
+				  FROM unnest($1::bigint[], $2::timestamptz[])
+				    AS f(id, available_at)
+				 WHERE o.id = f.id`, ids, schedule); err != nil {
+				return fmt.Errorf("release unsent outbox rows: %w", err)
+			}
 		}
 
 		if len(published) > 0 {
@@ -112,40 +239,34 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 			}
 		}
 
-		if len(failures) > 0 {
-			ids := make([]int64, 0, len(failures))
-			reasons := make([]string, 0, len(failures))
-			retryAt := make([]time.Time, 0, len(failures))
-
-			for _, item := range failures {
-				ids = append(ids, item.message.ID)
-				reasons = append(reasons, item.err.Error())
-				retryAt = append(retryAt, now.Add(backoffFor(
-					item.message.Attempts, r.cfg.MinBackoff, r.cfg.MaxBackoff)))
-			}
-
-			if _, err := r.db.Querier(ctx).Exec(ctx, `
-				UPDATE outbox AS o
-				   SET attempts = o.attempts + 1,
-				       last_error = f.last_error,
-				       available_at = f.available_at
-				  FROM unnest($1::bigint[], $2::text[], $3::timestamptz[])
-				    AS f(id, last_error, available_at)
-				 WHERE o.id = f.id`, ids, reasons, retryAt); err != nil {
-				return fmt.Errorf("mark outbox failed: %w", err)
-			}
+		if len(failures) == 0 {
+			return nil
 		}
 
-		stats.Published = len(published)
-		stats.Failed = len(failures)
+		ids := make([]int64, 0, len(failures))
+		reasons := make([]string, 0, len(failures))
+		retryAt := make([]time.Time, 0, len(failures))
+
+		for _, item := range failures {
+			ids = append(ids, item.message.ID)
+			reasons = append(reasons, item.err.Error())
+			retryAt = append(retryAt, now.Add(backoffFor(
+				item.message.Attempts, r.cfg.MinBackoff, r.cfg.MaxBackoff)))
+		}
+
+		if _, err := r.db.Querier(ctx).Exec(ctx, `
+			UPDATE outbox AS o
+			   SET attempts = o.attempts + 1,
+			       last_error = f.last_error,
+			       available_at = f.available_at
+			  FROM unnest($1::bigint[], $2::text[], $3::timestamptz[])
+			    AS f(id, last_error, available_at)
+			 WHERE o.id = f.id`, ids, reasons, retryAt); err != nil {
+			return fmt.Errorf("mark outbox failed: %w", err)
+		}
 
 		return nil
 	})
-	if err != nil {
-		return RelayStats{}, err
-	}
-
-	return stats, nil
 }
 
 func (r *Relay) Run(ctx context.Context) error {

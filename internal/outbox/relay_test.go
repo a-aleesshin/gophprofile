@@ -23,6 +23,7 @@ func validRelayConfig() RelayConfig {
 		MinBackoff:             time.Second,
 		MaxBackoff:             time.Minute,
 		MaxConsecutiveFailures: 3,
+		Lease:                  30 * time.Second,
 	}
 }
 
@@ -89,6 +90,11 @@ func TestNewRelay(t *testing.T) {
 			name: "zero max consecutive failures", db: db, transport: TransportKafka,
 			sender: stubSender{}, clock: clock.System{},
 			mutate: func(c *RelayConfig) { c.MaxConsecutiveFailures = 0 },
+		},
+		{
+			name: "zero lease", db: db, transport: TransportKafka,
+			sender: stubSender{}, clock: clock.System{},
+			mutate: func(c *RelayConfig) { c.Lease = 0 },
 		},
 	}
 

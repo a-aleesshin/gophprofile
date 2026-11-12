@@ -31,6 +31,7 @@ type RelayConfig struct {
 	MinBackoff             time.Duration `env:"MIN_BACKOFF" envDefault:"1s"`
 	MaxBackoff             time.Duration `env:"MAX_BACKOFF" envDefault:"30s"`
 	MaxConsecutiveFailures int           `env:"MAX_CONSECUTIVE_FAILURES" envDefault:"3"`
+	Lease                  time.Duration `env:"LEASE" envDefault:"30s"`
 }
 
 type RelayStats struct {
@@ -73,6 +74,8 @@ func NewRelay(
 	case cfg.MaxConsecutiveFailures <= 0:
 		return nil, fmt.Errorf("%w: max consecutive failures must be positive",
 			ErrInvalidRelayConfig)
+	case cfg.Lease <= 0:
+		return nil, fmt.Errorf("%w: lease must be positive", ErrInvalidRelayConfig)
 	}
 
 	return &Relay{db: db, transport: transport, sender: sender, clock: clock, cfg: cfg}, nil

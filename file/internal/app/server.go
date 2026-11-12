@@ -61,7 +61,7 @@ func BuildServer(
 
 	db := pgtx.New(pool)
 
-	store, err := s3.New(cfg.S3)
+	store, err := s3.New(cfg.S3, db)
 	if err != nil {
 		return fail(fmt.Errorf("open object storage: %w", err))
 	}

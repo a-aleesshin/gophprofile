@@ -14,6 +14,7 @@ var (
 	ErrInvalidConfig = errors.New("invalid rabbitmq config")
 	ErrChannelClosed = errors.New("rabbitmq channel is closed")
 	ErrUnroutable    = errors.New("rabbitmq returned the message as unroutable")
+	ErrInTransaction = errors.New("a broker call must not run inside a database transaction")
 )
 
 const (
