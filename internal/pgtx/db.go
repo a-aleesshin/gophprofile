@@ -45,8 +45,13 @@ func (d *DB) InTransaction(ctx context.Context) bool {
 }
 
 func (d *DB) InTx(ctx context.Context, fn func(context.Context) error) error {
-	if _, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
-		return fn(ctx)
+	if outer, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
+		nested, err := outer.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("savepoint: %w", err)
+		}
+
+		return settle(ctx, nested, fn)
 	}
 
 	tx, err := d.pool.Begin(ctx)
@@ -54,6 +59,10 @@ func (d *DB) InTx(ctx context.Context, fn func(context.Context) error) error {
 		return fmt.Errorf("begin: %w", err)
 	}
 
+	return settle(ctx, tx, fn)
+}
+
+func settle(ctx context.Context, tx pgx.Tx, fn func(context.Context) error) error {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(context.WithValue(ctx, txKey{}, tx)); err != nil {

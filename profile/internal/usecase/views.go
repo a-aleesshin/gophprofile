@@ -62,6 +62,7 @@ type Page struct {
 	Limit          int
 	AfterCreatedAt time.Time
 	AfterID        domain.AvatarID
+	OnlyServable   bool
 }
 
 type contentURLBuilder interface {

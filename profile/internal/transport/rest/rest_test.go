@@ -191,9 +191,11 @@ func TestMetadataCarriesEveryVariantURL(t *testing.T) {
 		},
 	}
 
+	h.get.result.Owner = true
+
 	// Act
-	response, payload := h.do(t, http.MethodGet,
-		"/api/v1/avatars/"+testAvatar+"/metadata", "", nil)
+	response, payload := h.asUser(t, http.MethodGet,
+		"/api/v1/avatars/"+testAvatar+"/metadata", "")
 
 	// Assert
 	require.Equal(t, http.StatusOK, response.StatusCode, "body: %s", payload)
@@ -209,8 +211,8 @@ func TestMetadataCarriesEveryVariantURL(t *testing.T) {
 	assert.Equal(t, "https://domain.com/upload/f/300x300.jpg", body.Variants[1].URL)
 	assert.Equal(t, int32(300), body.Variants[1].Height)
 
-	assert.True(t, h.get.cmd.UserID.IsZero(),
-		"metadata is public by contract, so no ownership check is requested")
+	assert.Equal(t, testUser, h.get.cmd.Viewer.String(),
+		"the route stays public, but the viewer decides how much of the body comes back")
 }
 
 func TestMetadataOfAPendingAvatarHasNoFile(t *testing.T) {
@@ -630,4 +632,105 @@ func TestNewHandlerRefusesAnIncompleteSet(t *testing.T) {
 
 	_, err = NewHandler(full, Config{Timeout: time.Second}, logger)
 	require.NoError(t, err)
+}
+
+func TestMetadataKeepsPrivateFieldsFromAStranger(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+	view := testReadyView(t)
+	view.Status = domain.AvatarStatusFailed
+	view.FailedReason = "too_large"
+
+	h.get.result = usecase.GetAvatarResult{Avatar: view, Owner: false}
+
+	// Act
+	response, payload := h.do(t, http.MethodGet,
+		"/api/v1/avatars/"+testAvatar+"/metadata", "", nil)
+
+	// Assert
+	require.Equal(t, http.StatusOK, response.StatusCode, "body: %s", payload)
+
+	body := decode[avatarBody](t, payload)
+
+	require.NotNil(t, body.File, "mime type and dimensions describe a public image")
+	assert.Empty(t, body.File.FileName,
+		"the name the uploader chose is theirs, and the avatar id is enough to ask for it")
+	assert.Empty(t, body.FailedReason,
+		"why somebody else's upload failed is none of the caller's business")
+
+	assert.NotContains(t, string(payload), "avatar.jpg")
+	assert.NotContains(t, string(payload), "too_large")
+}
+
+func TestMetadataGivesTheOwnerTheFailedReason(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+	view := testReadyView(t)
+	view.Status = domain.AvatarStatusFailed
+	view.FailedReason = "too_large"
+
+	h.get.result = usecase.GetAvatarResult{Avatar: view, Owner: true}
+
+	// Act
+	_, payload := h.asUser(t, http.MethodGet,
+		"/api/v1/avatars/"+testAvatar+"/metadata", "")
+
+	// Assert
+	assert.Equal(t, "too_large", decode[avatarBody](t, payload).FailedReason,
+		"the owner has to learn why their own upload failed")
+}
+
+func TestPublicReadsCarryTheViewerWhenThereIsOne(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		headers map[string]string
+		viewer  string
+	}{
+		{name: "anonymous", viewer: ""},
+		{
+			name:    "signed in",
+			headers: map[string]string{HeaderUserID: testUser},
+			viewer:  testUser,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Arrange
+			h := newHarness(t)
+
+			// Act
+			h.do(t, http.MethodGet, "/api/v1/avatars/"+testAvatar+"/metadata", "", test.headers)
+			h.do(t, http.MethodGet, "/api/v1/users/"+testUser+"/avatars", "", test.headers)
+
+			// Assert
+			assert.Equal(t, test.viewer, h.get.cmd.Viewer.String())
+			assert.Equal(t, test.viewer, h.list.cmd.Viewer.String())
+		})
+	}
+}
+
+func TestPublicReadsRefuseAUserTheyCannotParse(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+
+	// Act
+	response, _ := h.do(t, http.MethodGet,
+		"/api/v1/avatars/"+testAvatar+"/metadata", "",
+		map[string]string{HeaderUserID: strings.Repeat("u", 256)})
+
+	// Assert
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode,
+		"sending the header and getting a stranger's view back would be worse than an error")
+	assert.True(t, h.get.cmd.AvatarID.IsZero(), "the handler must not run at all")
 }

@@ -191,19 +191,28 @@ func TestAvatarsSelectWhatTheWatchdogShouldLookAt(t *testing.T) {
 	require.NoError(t, avatars.Save(t.Context(), &done))
 
 	// Act
-	stale, err := avatars.StaleByStatus(t.Context(),
-		[]domain.AvatarStatus{domain.AvatarStatusPending, domain.AvatarStatusProcessing},
-		time.Now().Add(-watchdogWindow), 50)
+	before := time.Now().Add(-watchdogWindow)
 
-	// Assert
+	processing, err := avatars.StaleByStatus(t.Context(),
+		domain.AvatarStatusProcessing, before, 50)
 	require.NoError(t, err)
 
-	found := make(map[string]bool, len(stale))
-	for _, avatar := range stale {
+	pending, err := avatars.StaleByStatus(t.Context(),
+		domain.AvatarStatusPending, before, 50)
+	require.NoError(t, err)
+
+	// Assert
+	found := make(map[string]bool, len(processing)+len(pending))
+	for _, avatar := range append(processing, pending...) {
 		found[avatar.ID().String()] = true
 	}
 
 	assert.True(t, found[stuck.ID().String()])
 	assert.False(t, found[fresh.ID().String()], "a recent upload is still allowed to finish")
 	assert.False(t, found[done.ID().String()], "a ready avatar is nobody's problem")
+
+	for _, avatar := range processing {
+		assert.True(t, avatar.Status().Equal(domain.AvatarStatusProcessing),
+			"each sweep asks about one status, which is what the index is built for")
+	}
 }

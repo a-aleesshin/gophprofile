@@ -31,8 +31,11 @@ func (h *Handler) listAvatars(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := h.withTimeout(r)
 	defer cancel()
 
+	viewer, _ := UserFrom(r.Context())
+
 	result, err := h.handlers.ListAvatars.Handle(ctx, usecase.ListAvatarsCommand{
 		UserID: user,
+		Viewer: viewer,
 		Limit:  limit,
 		Cursor: r.URL.Query().Get("cursor"),
 	})
@@ -48,7 +51,8 @@ func (h *Handler) listAvatars(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, view := range result.Items {
-		body.Items = append(body.Items, toAvatarBody(view, result.URLs[view.ID.String()]))
+		body.Items = append(body.Items,
+			toAvatarBody(view, result.URLs[view.ID.String()], result.Owner))
 	}
 
 	writeJSON(w, http.StatusOK, body)

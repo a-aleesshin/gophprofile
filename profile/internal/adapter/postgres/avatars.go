@@ -208,21 +208,16 @@ func (r *Avatars) CountByUser(ctx context.Context, userID domain.UserID) (int, e
 
 func (r *Avatars) StaleByStatus(
 	ctx context.Context,
-	statuses []domain.AvatarStatus,
+	status domain.AvatarStatus,
 	updatedBefore time.Time,
 	limit int,
 ) ([]domain.Avatar, error) {
-	raw := make([]string, 0, len(statuses))
-	for _, status := range statuses {
-		raw = append(raw, status.String())
-	}
-
 	rows, err := r.db.Querier(ctx).Query(ctx, `
 		SELECT `+avatarColumns+`
 		  FROM avatars
-		 WHERE status = ANY($1) AND updated_at < $2 AND deleted_at IS NULL
+		 WHERE status = $1 AND updated_at < $2 AND deleted_at IS NULL
 		 ORDER BY updated_at
-		 LIMIT $3`, raw, updatedBefore, limit)
+		 LIMIT $3`, status.String(), updatedBefore, limit)
 	if err != nil {
 		return nil, fmt.Errorf("select stale avatars: %w", err)
 	}

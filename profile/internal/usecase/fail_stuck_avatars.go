@@ -49,8 +49,7 @@ func (h *FailStuckAvatarsHandler) Handle(
 	now := h.clock.Now()
 
 	avatars, err := h.avatars.StaleByStatus(ctx,
-		[]domain.AvatarStatus{domain.AvatarStatusProcessing},
-		now.Add(-cmd.StaleAfter), cmd.Limit)
+		domain.AvatarStatusProcessing, now.Add(-cmd.StaleAfter), cmd.Limit)
 	if err != nil {
 		return FailStuckAvatarsResult{}, err
 	}

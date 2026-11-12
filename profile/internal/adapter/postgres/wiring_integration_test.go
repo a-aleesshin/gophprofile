@@ -77,7 +77,7 @@ func TestListAvatarsPagesThroughPostgres(t *testing.T) {
 
 	for page := range 10 {
 		result, err := handler.Handle(t.Context(), usecase.ListAvatarsCommand{
-			UserID: user, Limit: 2, Cursor: cursor,
+			UserID: user, Viewer: user, Limit: 2, Cursor: cursor,
 		})
 		require.NoError(t, err, "page %d", page)
 
@@ -100,12 +100,22 @@ func TestListAvatarsPagesThroughPostgres(t *testing.T) {
 	}
 
 	first, err := handler.Handle(t.Context(), usecase.ListAvatarsCommand{
-		UserID: user, Limit: 10,
+		UserID: user, Viewer: user, Limit: 10,
 	})
 	require.NoError(t, err)
+	assert.True(t, first.Owner)
 	assert.Equal(t,
 		"https://domain.com/upload/"+ready.FileID().String()+"/300x300.jpg",
 		first.URLs[ready.ID().String()]["300x300"])
+
+	stranger, err := handler.Handle(t.Context(), usecase.ListAvatarsCommand{
+		UserID: user, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.False(t, stranger.Owner)
+	require.Len(t, stranger.Items, 1,
+		"the five pending uploads are the owner's business, the ready one is the avatar")
+	assert.True(t, stranger.Items[0].ID.Equal(ready.ID()))
 }
 
 func TestResolveCurrentAvatarRunsAgainstPostgres(t *testing.T) {

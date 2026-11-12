@@ -39,7 +39,7 @@ type dimensionsBody struct {
 }
 
 type fileBody struct {
-	FileName   string         `json:"file_name"`
+	FileName   string         `json:"file_name,omitempty"`
 	MimeType   string         `json:"mime_type"`
 	SizeBytes  int64          `json:"size_bytes"`
 	Dimensions dimensionsBody `json:"dimensions"`
@@ -82,27 +82,33 @@ var opaqueReasons = map[string]bool{
 	usecase.ReasonUploadUnknown:   true,
 }
 
-func toAvatarBody(view usecase.AvatarView, urls map[string]string) avatarBody {
+func toAvatarBody(view usecase.AvatarView, urls map[string]string, owner bool) avatarBody {
 	body := avatarBody{
-		ID:           view.ID.String(),
-		UserID:       view.UserID.String(),
-		Status:       view.Status.String(),
-		Variants:     make([]variantBody, 0, len(view.Variants)),
-		FailedReason: view.FailedReason,
-		CreatedAt:    view.CreatedAt,
-		UpdatedAt:    view.UpdatedAt,
+		ID:        view.ID.String(),
+		UserID:    view.UserID.String(),
+		Status:    view.Status.String(),
+		Variants:  make([]variantBody, 0, len(view.Variants)),
+		CreatedAt: view.CreatedAt,
+		UpdatedAt: view.UpdatedAt,
 	}
 
-	if opaqueReasons[body.FailedReason] {
-		body.FailedReason = reasonUploadFailed
+	if owner {
+		body.FailedReason = view.FailedReason
+
+		if opaqueReasons[body.FailedReason] {
+			body.FailedReason = reasonUploadFailed
+		}
 	}
 
 	if view.MimeType != "" {
 		body.File = &fileBody{
-			FileName:   view.FileName,
 			MimeType:   view.MimeType,
 			SizeBytes:  view.SizeBytes,
 			Dimensions: dimensionsBody{Width: view.Width, Height: view.Height},
+		}
+
+		if owner {
+			body.File.FileName = view.FileName
 		}
 	}
 

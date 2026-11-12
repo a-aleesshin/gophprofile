@@ -13,12 +13,13 @@ type avatarViewLoader interface {
 
 type GetAvatarCommand struct {
 	AvatarID domain.AvatarID
-	UserID   domain.UserID
+	Viewer   domain.UserID
 }
 
 type GetAvatarResult struct {
 	Avatar AvatarView
 	URLs   map[string]string
+	Owner  bool
 }
 
 type GetAvatarHandler struct {
@@ -43,10 +44,6 @@ func (h *GetAvatarHandler) Handle(
 		return GetAvatarResult{}, err
 	}
 
-	if !cmd.UserID.IsZero() && !view.UserID.Equal(cmd.UserID) {
-		return GetAvatarResult{}, fmt.Errorf("%w: %s", ErrForbidden, cmd.AvatarID.String())
-	}
-
 	urls := make(map[string]string, len(view.Variants))
 
 	for _, variant := range view.Variants {
@@ -58,5 +55,9 @@ func (h *GetAvatarHandler) Handle(
 		urls[variant.Name] = url
 	}
 
-	return GetAvatarResult{Avatar: view, URLs: urls}, nil
+	return GetAvatarResult{
+		Avatar: view,
+		URLs:   urls,
+		Owner:  !cmd.Viewer.IsZero() && view.UserID.Equal(cmd.Viewer),
+	}, nil
 }

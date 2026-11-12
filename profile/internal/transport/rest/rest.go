@@ -147,7 +147,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	for pattern, handler := range public {
-		mux.Handle(pattern, h.wrap(handler))
+		mux.Handle(pattern, h.wrap(optionalUser(handler)))
 	}
 }
 

@@ -18,7 +18,7 @@ const (
 type staleAvatarFinder interface {
 	StaleByStatus(
 		ctx context.Context,
-		statuses []domain.AvatarStatus,
+		status domain.AvatarStatus,
 		updatedBefore time.Time,
 		limit int,
 	) ([]domain.Avatar, error)
@@ -73,8 +73,7 @@ func (h *RecoverStaleUploadsHandler) Handle(
 	now := h.clock.Now()
 
 	avatars, err := h.avatars.StaleByStatus(ctx,
-		[]domain.AvatarStatus{domain.AvatarStatusPending},
-		now.Add(-cmd.StaleAfter), cmd.Limit)
+		domain.AvatarStatusPending, now.Add(-cmd.StaleAfter), cmd.Limit)
 	if err != nil {
 		return RecoverStaleUploadsResult{}, err
 	}

@@ -53,11 +53,16 @@ func (r *Avatars) ViewsByUser(
 		after, afterID = &createdAt, &id
 	}
 
+	servable := ""
+	if page.OnlyServable {
+		servable = " AND status = 'ready'"
+	}
+
 	rows, err := r.db.Querier(ctx).Query(ctx, `
 		SELECT `+viewColumns+`
 		  FROM avatars
 		 WHERE user_id = $1
-		   AND deleted_at IS NULL
+		   AND deleted_at IS NULL`+servable+`
 		   AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3))
 		 ORDER BY created_at DESC, id DESC
 		 LIMIT $4`, userID.String(), after, afterID, page.Limit)

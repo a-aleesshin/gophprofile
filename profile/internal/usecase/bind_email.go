@@ -70,9 +70,25 @@ func (h *BindEmailHandler) Handle(
 	}
 
 	if err := h.tx.InTx(ctx, func(ctx context.Context) error {
-		if created {
-			return h.profiles.Create(ctx, &profile)
+		if !created {
+			return h.profiles.Save(ctx, &profile)
 		}
+
+		createErr := h.profiles.Create(ctx, &profile)
+		if !errors.Is(createErr, domain.ErrProfileExists) {
+			return createErr
+		}
+
+		existing, loadErr := h.profiles.ByUserID(ctx, cmd.UserID)
+		if loadErr != nil {
+			return loadErr
+		}
+
+		if setErr := existing.SetEmail(cmd.Email, now); setErr != nil {
+			return setErr
+		}
+
+		profile = existing
 
 		return h.profiles.Save(ctx, &profile)
 	}); err != nil {

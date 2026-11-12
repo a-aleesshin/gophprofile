@@ -50,6 +50,9 @@ type stubProfiles struct {
 	saveErr  error
 	created  []domain.Profile
 	saved    []domain.Profile
+
+	createErr  error
+	raceWinner *domain.Profile
 }
 
 func (s *stubProfiles) ByUserID(_ context.Context, userID domain.UserID) (domain.Profile, error) {
@@ -68,7 +71,15 @@ func (s *stubProfiles) ByUserID(_ context.Context, userID domain.UserID) (domain
 func (s *stubProfiles) Create(_ context.Context, profile *domain.Profile) error {
 	s.created = append(s.created, *profile)
 
-	return s.saveErr
+	if s.createErr == nil {
+		return s.saveErr
+	}
+
+	if s.raceWinner != nil {
+		s.profiles[profile.UserID().String()] = *s.raceWinner
+	}
+
+	return s.createErr
 }
 
 func (s *stubProfiles) Save(_ context.Context, profile *domain.Profile) error {
@@ -87,11 +98,11 @@ type stubAvatars struct {
 	created  []domain.Avatar
 	saved    []domain.Avatar
 
-	stale         []domain.Avatar
-	staleErr      error
-	staleStatuses []domain.AvatarStatus
-	staleBefore   time.Time
-	staleLimit    int
+	stale       []domain.Avatar
+	staleErr    error
+	staleStatus domain.AvatarStatus
+	staleBefore time.Time
+	staleLimit  int
 }
 
 func (s *stubAvatars) ByID(_ context.Context, id domain.AvatarID) (domain.Avatar, error) {
@@ -138,11 +149,11 @@ func (s *stubAvatars) CountByUser(context.Context, domain.UserID) (int, error) {
 
 func (s *stubAvatars) StaleByStatus(
 	_ context.Context,
-	statuses []domain.AvatarStatus,
+	status domain.AvatarStatus,
 	updatedBefore time.Time,
 	limit int,
 ) ([]domain.Avatar, error) {
-	s.staleStatuses = statuses
+	s.staleStatus = status
 	s.staleBefore = updatedBefore
 	s.staleLimit = limit
 

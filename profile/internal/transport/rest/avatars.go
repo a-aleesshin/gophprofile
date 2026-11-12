@@ -96,8 +96,11 @@ func (h *Handler) getAvatar(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := h.withTimeout(r)
 	defer cancel()
 
+	viewer, _ := UserFrom(r.Context())
+
 	result, err := h.handlers.GetAvatar.Handle(ctx, usecase.GetAvatarCommand{
 		AvatarID: avatarID,
+		Viewer:   viewer,
 	})
 	if err != nil {
 		writeFailure(w, err)
@@ -105,7 +108,7 @@ func (h *Handler) getAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toAvatarBody(result.Avatar, result.URLs))
+	writeJSON(w, http.StatusOK, toAvatarBody(result.Avatar, result.URLs, result.Owner))
 }
 
 func (h *Handler) resolveAvatar(w http.ResponseWriter, r *http.Request) {

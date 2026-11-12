@@ -13,6 +13,7 @@ type avatarViewLister interface {
 
 type ListAvatarsCommand struct {
 	UserID domain.UserID
+	Viewer domain.UserID
 	Limit  int
 	Cursor string
 }
@@ -21,6 +22,7 @@ type ListAvatarsResult struct {
 	Items      []AvatarView
 	URLs       map[string]map[string]string
 	NextCursor string
+	Owner      bool
 }
 
 type ListAvatarsHandler struct {
@@ -57,10 +59,13 @@ func (h *ListAvatarsHandler) Handle(
 		return ListAvatarsResult{}, err
 	}
 
+	owner := !cmd.Viewer.IsZero() && cmd.Viewer.Equal(cmd.UserID)
+
 	views, err := h.avatars.ViewsByUser(ctx, cmd.UserID, Page{
 		Limit:          limit + 1,
 		AfterCreatedAt: after,
 		AfterID:        afterID,
+		OnlyServable:   !owner,
 	})
 	if err != nil {
 		return ListAvatarsResult{}, err
@@ -90,5 +95,5 @@ func (h *ListAvatarsHandler) Handle(
 		urls[view.ID.String()] = perVariant
 	}
 
-	return ListAvatarsResult{Items: views, URLs: urls, NextCursor: next}, nil
+	return ListAvatarsResult{Items: views, URLs: urls, NextCursor: next, Owner: owner}, nil
 }

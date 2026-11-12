@@ -201,8 +201,9 @@ func (h *StartUploadHandler) Handle(
 
 	if err := h.tx.InTx(ctx, func(ctx context.Context) error {
 		if created {
-			if err := h.profiles.Create(ctx, &profile); err != nil {
-				return err
+			createErr := h.profiles.Create(ctx, &profile)
+			if createErr != nil && !errors.Is(createErr, domain.ErrProfileExists) {
+				return createErr
 			}
 		}
 

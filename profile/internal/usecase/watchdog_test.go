@@ -64,8 +64,8 @@ func TestRecoverStaleUploads_AsksOnlyAboutPendingOnes(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	require.Len(t, avatars.staleStatuses, 1)
-	assert.True(t, avatars.staleStatuses[0].Equal(domain.AvatarStatusPending))
+	assert.True(t, avatars.staleStatus.Equal(domain.AvatarStatusPending),
+		"one status per sweep is what lets the index answer without a sort")
 	assert.Equal(t, testNow.Add(-10*time.Minute), avatars.staleBefore)
 	assert.Equal(t, 50, avatars.staleLimit)
 }
@@ -258,8 +258,8 @@ func TestFailStuckAvatars_FailsWhatNoFactEverReachedUs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, FailStuckAvatarsResult{Failed: 2}, got)
 
-	require.Len(t, avatars.staleStatuses, 1)
-	assert.True(t, avatars.staleStatuses[0].Equal(domain.AvatarStatusProcessing))
+	assert.True(t, avatars.staleStatus.Equal(domain.AvatarStatusProcessing),
+		"one status per sweep is what lets the index answer without a sort")
 	assert.Equal(t, testNow.Add(-30*time.Minute), avatars.staleBefore)
 
 	require.Len(t, avatars.saved, 2)

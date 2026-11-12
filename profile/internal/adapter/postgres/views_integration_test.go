@@ -217,3 +217,40 @@ func TestViewsByUserUseTheIndexAndDoNotSort(t *testing.T) {
 	assert.False(t, strings.Contains(plan, "Sort Method"),
 		"the index already provides the order, sorting 5000 rows per page would not")
 }
+
+func TestViewsByUserCanHideWhatIsNotServable(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	avatars := NewAvatars(sharedDB)
+	user := newUser(t)
+	base := time.Now().Truncate(time.Microsecond)
+
+	ready := newReadyAvatar(t, user)
+
+	pending := newPendingAvatarAt(t, user, base.Add(-time.Hour))
+
+	failed := newPendingAvatarAt(t, user, base.Add(-2*time.Hour))
+	require.NoError(t, failed.MarkFailed("too_large", time.Now()))
+	require.NoError(t, avatars.Save(t.Context(), &failed))
+
+	// Act
+	everything, err := avatars.ViewsByUser(t.Context(), user, usecase.Page{Limit: 10})
+	require.NoError(t, err)
+
+	servable, err := avatars.ViewsByUser(t.Context(), user,
+		usecase.Page{Limit: 10, OnlyServable: true})
+	require.NoError(t, err)
+
+	// Assert
+	require.Len(t, everything, 3, "the owner sees the whole gallery")
+
+	require.Len(t, servable, 1)
+	assert.True(t, servable[0].ID.Equal(ready.ID()))
+
+	ids := []string{pending.ID().String(), failed.ID().String()}
+	for _, view := range servable {
+		assert.NotContains(t, ids, view.ID.String(),
+			"a public gallery must not enumerate somebody's unfinished uploads")
+	}
+}

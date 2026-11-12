@@ -21,6 +21,26 @@ func UserFrom(ctx context.Context) (domain.UserID, bool) {
 	return user, carried && !user.IsZero()
 }
 
+func optionalUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := r.Header.Get(HeaderUserID)
+		if raw == "" {
+			next.ServeHTTP(w, r)
+
+			return
+		}
+
+		user, err := domain.NewUserID(raw)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "bad_user")
+
+			return
+		}
+
+		next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
+	})
+}
+
 func requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := r.Header.Get(HeaderUserID)

@@ -37,7 +37,7 @@ func TestGetAvatar_BuildsEveryVariantURL(t *testing.T) {
 
 	// Act
 	got, err := NewGetAvatarHandler(source, testURLs()).
-		Handle(context.Background(), GetAvatarCommand{AvatarID: view.ID, UserID: user})
+		Handle(context.Background(), GetAvatarCommand{AvatarID: view.ID, Viewer: user})
 
 	// Assert
 	require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestGetAvatar_BuildsEveryVariantURL(t *testing.T) {
 		"the original keeps its exif and is served by signed link only")
 }
 
-func TestGetAvatar_RefusesSomebodyElsesAvatar(t *testing.T) {
+func TestGetAvatar_DoesNotCallAStrangerTheOwner(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
@@ -58,13 +58,28 @@ func TestGetAvatar_RefusesSomebodyElsesAvatar(t *testing.T) {
 	source := newViews(t, view)
 
 	// Act
-	_, err := NewGetAvatarHandler(source, testURLs()).
+	stranger, strangerErr := NewGetAvatarHandler(source, testURLs()).
 		Handle(context.Background(), GetAvatarCommand{
-			AvatarID: view.ID, UserID: testUserID(t, "user-2"),
+			AvatarID: view.ID, Viewer: testUserID(t, "user-2"),
+		})
+
+	anonymous, anonymousErr := NewGetAvatarHandler(source, testURLs()).
+		Handle(context.Background(), GetAvatarCommand{AvatarID: view.ID})
+
+	owner, ownerErr := NewGetAvatarHandler(source, testURLs()).
+		Handle(context.Background(), GetAvatarCommand{
+			AvatarID: view.ID, Viewer: testUserID(t, "user-1"),
 		})
 
 	// Assert
-	require.ErrorIs(t, err, ErrForbidden)
+	require.NoError(t, strangerErr, "metadata stays readable, only its private fields do not")
+	require.NoError(t, anonymousErr)
+	require.NoError(t, ownerErr)
+
+	assert.False(t, stranger.Owner)
+	assert.False(t, anonymous.Owner,
+		"an absent viewer used to mean no check at all, which let anyone read the file name")
+	assert.True(t, owner.Owner)
 }
 
 func TestGetAvatar_ServesAPendingAvatarAsMetadata(t *testing.T) {
@@ -81,7 +96,7 @@ func TestGetAvatar_ServesAPendingAvatarAsMetadata(t *testing.T) {
 
 	// Act
 	got, err := NewGetAvatarHandler(source, testURLs()).
-		Handle(context.Background(), GetAvatarCommand{AvatarID: view.ID, UserID: user})
+		Handle(context.Background(), GetAvatarCommand{AvatarID: view.ID, Viewer: user})
 
 	// Assert
 	require.NoError(t, err,
@@ -412,4 +427,41 @@ func TestBindEmailStoresTheHashAlongsideTheEmail(t *testing.T) {
 
 	require.Len(t, profiles.created, 1, "binding an email may be the first thing a user does")
 	assert.Equal(t, "user@example.com", profiles.created[0].Email().String())
+}
+
+func TestListAvatars_HidesWhatIsNotServableFromAStranger(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		viewer   domain.UserID
+		owner    bool
+		servable bool
+	}{
+		{name: "anonymous", servable: true},
+		{name: "stranger", viewer: testUserID(t, "user-2"), servable: true},
+		{name: "owner", viewer: testUserID(t, "user-1"), owner: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Arrange
+			user := testUserID(t, "user-1")
+			source := newViews(t, testReadyView(t, user, testNow))
+
+			// Act
+			got, err := NewListAvatarsHandler(source, testURLs()).
+				Handle(context.Background(), ListAvatarsCommand{
+					UserID: user, Viewer: test.viewer,
+				})
+
+			// Assert
+			require.NoError(t, err)
+			assert.Equal(t, test.owner, got.Owner)
+			assert.Equal(t, test.servable, source.page.OnlyServable,
+				"a gallery open to everyone would otherwise enumerate failed uploads")
+		})
+	}
 }
