@@ -222,6 +222,7 @@ func workerConfig(t *testing.T) config.Worker {
 			Lease:                  30 * time.Second,
 		},
 		Jobs: config.Jobs{
+			BacklogInterval:   200 * time.Millisecond,
 			ReconcileInterval: time.Minute,
 			ReconcileLimit:    10,
 			ReapInterval:      time.Minute,

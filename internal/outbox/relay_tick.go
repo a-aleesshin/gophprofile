@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
 
 const settleTimeout = 10 * time.Second
@@ -276,6 +278,9 @@ func (r *Relay) Run(ctx context.Context) error {
 
 	for {
 		stats, err := r.Tick(ctx)
+
+		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed)
+
 		if err != nil {
 			return err
 		}
@@ -296,6 +301,40 @@ func (r *Relay) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+// ObserveBacklog reports how long the oldest unpublished row has been waiting.
+// It is a separate job rather than part of Tick: a relay that cannot lease
+// anything never reaches the end of a tick, and that is exactly the state the
+// gauge has to describe.
+func (r *Relay) ObserveBacklog(ctx context.Context) error {
+	var oldest time.Time
+
+	err := r.db.Querier(ctx).QueryRow(ctx, `
+		SELECT created_at
+		  FROM outbox
+		 WHERE transport = $1 AND published_at IS NULL
+		 ORDER BY id
+		 LIMIT 1`, r.transport).Scan(&oldest)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		metrics.SetOutboxBacklogAge(r.transport, 0)
+
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("select oldest unpublished %s row: %w", r.transport, err)
+	}
+
+	age := r.clock.Now().Sub(oldest)
+	if age < 0 {
+		age = 0
+	}
+
+	metrics.SetOutboxBacklogAge(r.transport, age)
+
+	return nil
 }
 
 func scopeOf(message claimed) string {

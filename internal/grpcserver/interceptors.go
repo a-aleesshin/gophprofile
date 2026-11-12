@@ -12,6 +12,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"google.golang.org/grpc/status"
 )
 
@@ -67,10 +69,15 @@ func logging(logger *slog.Logger) grpc.UnaryServerInterceptor {
 
 		response, err := handler(ctx, request)
 
+		took := time.Since(started)
+		code := status.Code(err).String()
+
+		metrics.ObserveGRPCCall(info.FullMethod, code, took)
+
 		attrs := []any{
 			"method", info.FullMethod,
-			"code", status.Code(err).String(),
-			"took", time.Since(started),
+			"code", code,
+			"took", took,
 		}
 
 		if err != nil {

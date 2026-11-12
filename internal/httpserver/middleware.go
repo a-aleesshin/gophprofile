@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
 
 type statusRecorder struct {
@@ -88,10 +90,14 @@ func Log(logger *slog.Logger, next http.Handler) http.Handler {
 			level = slog.LevelError
 		}
 
+		took := time.Since(started)
+
+		metrics.ObserveHTTPRequest(r.Pattern, r.Method, status, took)
+
 		logger.Log(r.Context(), level, "http request",
 			slog.String("method", r.Method),
 			slog.String("route", r.Pattern),
 			slog.Int("status", status),
-			slog.Duration("took", time.Since(started)))
+			slog.Duration("took", took))
 	})
 }

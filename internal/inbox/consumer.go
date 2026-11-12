@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 )
 
@@ -187,7 +188,12 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 
 func (c *Consumer) Run(ctx context.Context) error {
 	for {
-		if _, err := c.Consume(ctx); err != nil {
+		stats, err := c.Consume(ctx)
+
+		metrics.ObserveInbox(c.name,
+			stats.Handled, stats.Duplicate, stats.Retried, stats.Dropped)
+
+		if err != nil {
 			return err
 		}
 

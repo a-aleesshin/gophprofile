@@ -39,6 +39,7 @@ type Jobs struct {
 	WatchdogLimit     int           `env:"WATCHDOG_LIMIT" envDefault:"100"`
 	RecoverStaleAfter time.Duration `env:"RECOVER_STALE_AFTER" envDefault:"10m"`
 	FailStuckAfter    time.Duration `env:"FAIL_STUCK_AFTER" envDefault:"30m"`
+	BacklogInterval   time.Duration `env:"BACKLOG_INTERVAL" envDefault:"15s"`
 	PruneInterval     time.Duration `env:"PRUNE_INTERVAL" envDefault:"1h"`
 }
 

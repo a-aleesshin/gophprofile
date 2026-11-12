@@ -16,7 +16,10 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/a-aleesshin/gophprofile/file/migrations"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/a-aleesshin/gophprofile/internal/clock"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
@@ -969,4 +972,64 @@ func rowExists(t *testing.T, id int64) bool {
 		`SELECT EXISTS (SELECT 1 FROM outbox WHERE id = $1)`, id).Scan(&exists))
 
 	return exists
+}
+
+func backlogAge(t *testing.T, transport string) float64 {
+	t.Helper()
+
+	return testutil.ToFloat64(
+		metrics.BacklogAgeForTest(transport))
+}
+
+func TestRelayObservesTheBacklogAge(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka, &recordingSender{}, now, nil)
+
+	// Act: a row that has been waiting for a while.
+	_, err := sharedDB.Pool().Exec(t.Context(), `
+		INSERT INTO outbox (transport, destination, partition_key, message_type, payload,
+			created_at)
+		VALUES ($1, 'test.destination', 'key', 'TestMessage', '{}', $2)`,
+		TransportKafka, now.Add(-90*time.Second))
+	require.NoError(t, err)
+
+	require.NoError(t, relay.ObserveBacklog(t.Context()))
+	waiting := backlogAge(t, TransportKafka)
+
+	// The relay catches up and the table drains.
+	resetOutbox(t)
+
+	require.NoError(t, relay.ObserveBacklog(t.Context()))
+	drained := backlogAge(t, TransportKafka)
+
+	// Assert
+	assert.InDelta(t, 90, waiting, 1,
+		"this is the only number that shows a relay which stopped publishing")
+	assert.InDelta(t, 0, drained, 0.001,
+		"a drained outbox must say zero, not keep the age it last saw")
+}
+
+func TestRelayReportsTheBacklogOfItsOwnTransportOnly(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka, &recordingSender{}, now, nil)
+
+	_, err := sharedDB.Pool().Exec(t.Context(), `
+		INSERT INTO outbox (transport, destination, partition_key, message_type, payload,
+			created_at)
+		VALUES ($1, 'test.destination', 'key', 'TestMessage', '{}', $2)`,
+		TransportRabbit, now.Add(-time.Hour))
+	require.NoError(t, err)
+
+	// Act
+	require.NoError(t, relay.ObserveBacklog(t.Context()))
+
+	// Assert
+	assert.InDelta(t, 0, backlogAge(t, TransportKafka), 0.001,
+		"a stuck rabbit relay must not make the kafka one look stuck too")
 }

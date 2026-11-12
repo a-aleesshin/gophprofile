@@ -226,6 +226,7 @@ func workerConfig(t *testing.T) config.Worker {
 			MaxConsecutiveFailures: 3,
 		},
 		Jobs: config.Jobs{
+			BacklogInterval:   200 * time.Millisecond,
 			WatchdogInterval:  200 * time.Millisecond,
 			WatchdogLimit:     10,
 			RecoverStaleAfter: 10 * time.Minute,

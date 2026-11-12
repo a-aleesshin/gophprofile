@@ -25,6 +25,7 @@ const (
 
 	jobRecover     = "recover-stale-uploads"
 	jobFailStuck   = "fail-stuck-avatars"
+	jobBacklog     = "observe-outbox-backlog"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
 )
@@ -146,6 +147,12 @@ func BuildWorker(
 		return fail(fmt.Errorf("build %s: %w", jobFailStuck, err))
 	}
 
+	backlogJob, err := worker.Every(jobBacklog, cfg.Jobs.BacklogInterval, logger,
+		relay.ObserveBacklog)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobBacklog, err))
+	}
+
 	outboxPruner, err := outbox.NewPruner(db, now, cfg.OutboxPrune)
 	if err != nil {
 		return fail(fmt.Errorf("build outbox pruner: %w", err))
@@ -216,6 +223,7 @@ func BuildWorker(
 	runner := worker.New().
 		Add("kafka relay", relay).
 		Add("fact consumer", consumer).
+		Add(jobBacklog, backlogJob).
 		Add(jobRecover, recoverJob).
 		Add(jobFailStuck, failStuckJob).
 		Add(jobPruneOutbox, pruneOutboxJob).

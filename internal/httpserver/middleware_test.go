@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -199,4 +200,53 @@ func TestNewWrapsEveryServerInRecovery(t *testing.T) {
 	// Assert
 	assert.Equal(t, http.StatusInternalServerError, recorder.Code,
 		"health, metrics and pprof are built the same way and must not be an exception")
+}
+
+func counterValue(t *testing.T, name string, labels map[string]string) float64 {
+	t.Helper()
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+
+		for _, metric := range family.GetMetric() {
+			matched := 0
+
+			for _, pair := range metric.GetLabel() {
+				if labels[pair.GetName()] == pair.GetValue() {
+					matched++
+				}
+			}
+
+			if matched == len(labels) {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+
+	return 0
+}
+
+func TestLogFeedsTheMetrics(t *testing.T) {
+	// Not parallel: it compares a counter before and after.
+	logger, _ := captureLogs()
+
+	const route = "GET /things/{id}"
+
+	labels := map[string]string{"route": route, "method": "GET", "status": "204"}
+	before := counterValue(t, "gophprofile_http_requests_total", labels)
+
+	handler := Log(logger, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	serve(handler, "/things/7")
+
+	assert.InDelta(t, before+1,
+		counterValue(t, "gophprofile_http_requests_total", labels), 0.001,
+		"the log line and the counter come from the same place, so neither can drift")
 }

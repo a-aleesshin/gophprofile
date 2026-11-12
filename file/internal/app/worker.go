@@ -30,6 +30,7 @@ const (
 
 	jobReconcile   = "reconcile-uploads"
 	jobReap        = "reap-stale-files"
+	jobBacklog     = "observe-outbox-backlog"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
 )
@@ -218,6 +219,18 @@ func BuildWorker(
 		return fail(fmt.Errorf("build %s: %w", jobReap, err))
 	}
 
+	rabbitBacklogJob, err := worker.Every(jobBacklog+".rabbit", cfg.Jobs.BacklogInterval,
+		logger, rabbitRelay.ObserveBacklog)
+	if err != nil {
+		return fail(fmt.Errorf("build %s for rabbit: %w", jobBacklog, err))
+	}
+
+	kafkaBacklogJob, err := worker.Every(jobBacklog+".kafka", cfg.Jobs.BacklogInterval,
+		logger, kafkaRelay.ObserveBacklog)
+	if err != nil {
+		return fail(fmt.Errorf("build %s for kafka: %w", jobBacklog, err))
+	}
+
 	outboxPruner, err := outbox.NewPruner(db, now, cfg.OutboxPrune)
 	if err != nil {
 		return fail(fmt.Errorf("build outbox pruner: %w", err))
@@ -263,6 +276,8 @@ func BuildWorker(
 	}
 
 	runner.
+		Add(jobBacklog+".rabbit", rabbitBacklogJob).
+		Add(jobBacklog+".kafka", kafkaBacklogJob).
 		Add(jobReconcile, reconcileJob).
 		Add(jobReap, reapJob).
 		Add(jobPruneOutbox, pruneOutboxJob).
