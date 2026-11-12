@@ -62,6 +62,26 @@ func loadCommon(dst *Common) error {
 	return nil
 }
 
+type Migrate struct {
+	Log      logging.Config
+	Postgres pgtx.Config
+}
+
+func LoadMigrate() (Migrate, error) {
+	var cfg Migrate
+
+	for _, section := range []func() error{
+		func() error { return config.LoadSection(&cfg.Log, "LOG_") },
+		func() error { return config.LoadSection(&cfg.Postgres, "POSTGRES_") },
+	} {
+		if err := section(); err != nil {
+			return Migrate{}, err
+		}
+	}
+
+	return cfg, nil
+}
+
 func LoadWorker() (Worker, error) {
 	var cfg Worker
 

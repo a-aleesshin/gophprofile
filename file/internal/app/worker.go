@@ -14,7 +14,6 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/adapter/s3"
 	"github.com/a-aleesshin/gophprofile/file/internal/config"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
-	"github.com/a-aleesshin/gophprofile/file/migrations"
 	"github.com/a-aleesshin/gophprofile/internal/broker/kafka"
 	"github.com/a-aleesshin/gophprofile/internal/broker/rabbitmq"
 	"github.com/a-aleesshin/gophprofile/internal/clock"
@@ -60,10 +59,6 @@ func BuildWorker(
 	}
 
 	closers = append(closers, pool.Close)
-
-	if err := migrations.Up(ctx, pool); err != nil {
-		return fail(fmt.Errorf("apply migrations: %w", err))
-	}
 
 	db := pgtx.New(pool)
 

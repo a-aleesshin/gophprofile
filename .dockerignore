@@ -1,0 +1,11 @@
+.git
+.idea
+.vscode
+_tmp
+docs
+*.md
+.env
+.env.local
+Dockerfile
+.dockerignore
+deploy

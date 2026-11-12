@@ -3,4 +3,68 @@ version: '3'
 dotenv: ['.env']
 
 vars:
-  ENV: '{{.ENV | default "local"}}'
+  GO: '{{.GO | default "go"}}'
+
+tasks:
+  build:
+    desc: Build every binary of the file service
+    cmds:
+      - '{{.GO}} build ./...'
+
+  test:
+    desc: Run the unit tests
+    cmds:
+      - '{{.GO}} test -count=1 ./...'
+
+  test:integration:
+    desc: Run the integration tests, which start containers
+    cmds:
+      - '{{.GO}} test -tags=integration -count=1 -timeout=20m ./...'
+
+  test:cover:
+    desc: Report coverage per package
+    cmds:
+      - '{{.GO}} test -tags=integration -cover -count=1 ./...'
+
+  fmt:
+    desc: Format the source
+    cmds:
+      - gofmt -w .
+
+  vet:
+    desc: Run go vet with and without the integration tag
+    cmds:
+      - '{{.GO}} vet ./...'
+      - '{{.GO}} vet -tags=integration ./...'
+
+  generate:
+    desc: Regenerate the protobuf code
+    cmds:
+      - buf lint
+      - buf format -w file/api/proto/file/v1/file.proto
+      - buf generate
+
+  up:
+    desc: Start the whole environment
+    cmds:
+      - docker compose up -d --build
+
+  down:
+    desc: Stop the environment and keep the volumes
+    cmds:
+      - docker compose down
+
+  down:clean:
+    desc: Stop the environment and drop the volumes
+    cmds:
+      - docker compose down -v
+
+  logs:
+    desc: Follow the logs of the file service
+    cmds:
+      - docker compose logs -f file-server file-worker
+
+  ps:
+    desc: Show the state of every service
+    cmds:
+      - docker compose ps
