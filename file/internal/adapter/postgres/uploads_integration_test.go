@@ -73,6 +73,12 @@ func TestMain(m *testing.M) {
 func testUpload(t *testing.T) domain.Upload {
 	t.Helper()
 
+	return testUploadAt(t, time.Now())
+}
+
+func testUploadAt(t *testing.T, now time.Time) domain.Upload {
+	t.Helper()
+
 	id, err := domain.NewUploadID()
 	require.NoError(t, err)
 
@@ -103,7 +109,7 @@ func testUpload(t *testing.T) domain.Upload {
 		DeclaredMime:   mime,
 		MaxSize:        size,
 		TTL:            15 * time.Minute,
-		Now:            time.Now(),
+		Now:            now,
 	})
 	require.NoError(t, err)
 
@@ -291,18 +297,25 @@ func TestUploads_PendingExpiredBefore(t *testing.T) {
 	repo := NewUploads(sharedDB)
 	ctx := t.Context()
 
-	expired := testUpload(t)
+	long := time.Now().Add(-2 * staleWindow)
+
+	oldest := testUploadAt(t, long.Add(-time.Hour))
+	require.NoError(t, repo.Create(ctx, &oldest))
+
+	expired := testUploadAt(t, long)
 	require.NoError(t, repo.Create(ctx, &expired))
 
 	fresh := testUpload(t)
 	require.NoError(t, repo.Create(ctx, &fresh))
 
-	gone := testUpload(t)
+	gone := testUploadAt(t, long)
 	require.NoError(t, repo.Create(ctx, &gone))
 	require.NoError(t, gone.Expire(time.Now()))
 	require.NoError(t, repo.Save(ctx, &gone))
 
-	found, err := repo.PendingExpiredBefore(ctx, expired.ExpiresAt().Add(time.Second), 100)
+	before := time.Now().Add(-staleWindow)
+
+	found, err := repo.PendingExpiredBefore(ctx, before, 100)
 	require.NoError(t, err)
 
 	ids := make(map[string]bool, len(found))
@@ -311,10 +324,20 @@ func TestUploads_PendingExpiredBefore(t *testing.T) {
 		assert.True(t, upload.IsPending(), "only pending tickets are reconciled")
 	}
 
+	assert.True(t, ids[oldest.ID().String()])
 	assert.True(t, ids[expired.ID().String()])
 	assert.False(t, ids[gone.ID().String()], "a terminal ticket is already settled")
+	assert.False(t, ids[fresh.ID().String()], "a ticket that has not expired yet can be used")
 
-	limited, err := repo.PendingExpiredBefore(ctx, time.Now().Add(time.Hour), 1)
+	position := make(map[string]int, len(found))
+	for i, upload := range found {
+		position[upload.ID().String()] = i
+	}
+
+	assert.Less(t, position[oldest.ID().String()], position[expired.ID().String()],
+		"the sweep takes the longest expired first")
+
+	limited, err := repo.PendingExpiredBefore(ctx, before, 1)
 	require.NoError(t, err)
 	assert.Len(t, limited, 1, "the limit caps what one sweep takes on")
 }

@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,12 +53,15 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+var testRuns atomic.Int64
+
 func testConfig(t *testing.T) Config {
 	t.Helper()
 
 	return Config{
-		URL:      brokerURL,
-		Exchange: "test." + t.Name(),
+		URL: brokerURL,
+		Exchange: "test." + strings.ReplaceAll(t.Name(), "/", ".") +
+			"." + strconv.FormatInt(testRuns.Add(1), 10),
 		Prefetch: 3,
 		Ladder:   []time.Duration{200 * time.Millisecond, 400 * time.Millisecond},
 	}

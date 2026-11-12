@@ -131,3 +131,43 @@ func TestBuildServerStartsAndAnswers(t *testing.T) {
 		t.Fatal("the server did not stop after the context was cancelled")
 	}
 }
+
+func TestBuildServerRunsWithoutPprof(t *testing.T) {
+	// Arrange
+	cfg := serverConfig(t)
+
+	// The port the config would have used, kept so the assertion can prove that
+	// nothing listens there — comparing against an empty address would pass
+	// whatever the code does.
+	absent := cfg.PprofServer.Addr
+	cfg.PprofServer.Addr = ""
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Act
+	runner, shutdown, err := BuildServer(ctx, cfg, logger)
+
+	// Assert
+	require.NoError(t, err,
+		"profiling is opt in, and an unset address must not stop the service")
+
+	defer shutdown()
+
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(ctx) }()
+
+	waitReady(t, cfg.HealthServer.Addr)
+
+	response, err := http.Get("http://" + absent + "/debug/pprof/")
+	if err == nil {
+		defer func() { _ = response.Body.Close() }()
+	}
+
+	require.Error(t, err, "nothing may be listening where pprof would have been")
+
+	cancel()
+	<-done
+}

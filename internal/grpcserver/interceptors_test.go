@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,18 +19,42 @@ import (
 	grpchealth "google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/reflection"
+	reflectpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/grpc/status"
 )
 
 const (
-	testToken  = "0123456789abcdef0123456789abcdef"
-	echoMethod = "/gophprofile.test.v1.Echo/Ping"
+	testToken        = "0123456789abcdef0123456789abcdef"
+	echoMethod       = "/gophprofile.test.v1.Echo/Ping"
+	echoStreamMethod = "/gophprofile.test.v1.Echo/Stream"
+	reflectionMethod = "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo"
 )
 
+type safeBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *safeBuffer) Write(entry []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buffer.Write(entry)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return b.buffer.String()
+}
+
 type echo struct {
-	panics bool
-	err    error
-	calls  int
+	panics      bool
+	err         error
+	calls       int
+	streamCalls int
 }
 
 func (e *echo) ping(context.Context) (*healthpb.HealthCheckResponse, error) {
@@ -45,6 +71,16 @@ func (e *echo) ping(context.Context) (*healthpb.HealthCheckResponse, error) {
 	return &healthpb.HealthCheckResponse{
 		Status: healthpb.HealthCheckResponse_SERVING,
 	}, nil
+}
+
+func (e *echo) stream() error {
+	e.streamCalls++
+
+	if e.panics {
+		panic("the stream gave up")
+	}
+
+	return e.err
 }
 
 var echoDesc = grpc.ServiceDesc{
@@ -77,9 +113,27 @@ var echoDesc = grpc.ServiceDesc{
 				func(ctx context.Context, _ any) (any, error) { return service.ping(ctx) })
 		},
 	}},
+	Streams: []grpc.StreamDesc{{
+		StreamName:    "Stream",
+		ServerStreams: true,
+		Handler: func(srv any, stream grpc.ServerStream) error {
+			service, ok := srv.(*echo)
+			if !ok {
+				return errors.New("unexpected service")
+			}
+
+			if err := service.stream(); err != nil {
+				return err
+			}
+
+			return stream.SendMsg(&healthpb.HealthCheckResponse{
+				Status: healthpb.HealthCheckResponse_SERVING,
+			})
+		},
+	}},
 }
 
-func serve(t *testing.T, logs *bytes.Buffer, service *echo) *grpc.ClientConn {
+func serve(t *testing.T, logs *safeBuffer, service *echo) *grpc.ClientConn {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -88,6 +142,7 @@ func serve(t *testing.T, logs *bytes.Buffer, service *echo) *grpc.ClientConn {
 	server, err := New(testConfig(addr), logger, func(s *grpc.Server) {
 		s.RegisterService(&echoDesc, service)
 		healthpb.RegisterHealthServer(s, grpchealth.NewServer())
+		reflection.Register(s)
 	})
 	require.NoError(t, err)
 
@@ -129,11 +184,54 @@ func callEcho(ctx context.Context, conn *grpc.ClientConn) error {
 		&healthpb.HealthCheckRequest{}, &healthpb.HealthCheckResponse{})
 }
 
+func callEchoStream(ctx context.Context, conn *grpc.ClientConn) error {
+	stream, err := conn.NewStream(ctx, &echoDesc.Streams[0], echoStreamMethod)
+	if err != nil {
+		return err
+	}
+
+	if err := stream.SendMsg(&healthpb.HealthCheckRequest{}); err != nil &&
+		!errors.Is(err, io.EOF) {
+		return err
+	}
+
+	return stream.RecvMsg(&healthpb.HealthCheckResponse{})
+}
+
+func listServices(ctx context.Context, conn *grpc.ClientConn) ([]string, error) {
+	stream, err := reflectpb.NewServerReflectionClient(conn).ServerReflectionInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	request := &reflectpb.ServerReflectionRequest{
+		MessageRequest: &reflectpb.ServerReflectionRequest_ListServices{},
+	}
+
+	if err := stream.Send(request); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	response, err := stream.Recv()
+	if err != nil {
+		return nil, err
+	}
+
+	services := response.GetListServicesResponse().GetService()
+	names := make([]string, 0, len(services))
+
+	for _, service := range services {
+		names = append(names, service.GetName())
+	}
+
+	return names, nil
+}
+
 func TestRecoveryKeepsTheProcessAlive(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
-	var logs bytes.Buffer
+	var logs safeBuffer
 
 	service := &echo{panics: true}
 	conn := serve(t, &logs, service)
@@ -161,7 +259,7 @@ func TestLoggingKeepsTheErrorTheCallerDoesNotSee(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
-	var logs bytes.Buffer
+	var logs safeBuffer
 
 	conn := serve(t, &logs, &echo{
 		err: status.Error(codes.Internal, "pq: relation \"files\" does not exist"),
@@ -181,7 +279,7 @@ func TestLoggingKeepsTheErrorTheCallerDoesNotSee(t *testing.T) {
 func TestAuthorizationRefusesWhatItCannotVerify(t *testing.T) {
 	t.Parallel()
 
-	var logs bytes.Buffer
+	var logs safeBuffer
 
 	service := &echo{}
 	conn := serve(t, &logs, service)
@@ -230,7 +328,7 @@ func TestAuthorizationAcceptsTheRightToken(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
-	var logs bytes.Buffer
+	var logs safeBuffer
 
 	service := &echo{}
 	conn := serve(t, &logs, service)
@@ -248,7 +346,7 @@ func TestAuthorizationLetsTheHealthProbeThrough(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
-	var logs bytes.Buffer
+	var logs safeBuffer
 
 	conn := serve(t, &logs, &echo{})
 
@@ -292,4 +390,126 @@ func TestNewRefusesAWeakToken(t *testing.T) {
 			assert.Nil(t, server)
 		})
 	}
+}
+
+func TestAuthorizationRefusesReflectionWithoutAToken(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	conn := serve(t, &logs, &echo{})
+
+	// Act
+	names, err := listServices(t.Context(), conn)
+
+	// Assert
+	require.Error(t, err,
+		"reflection is a stream, so a unary-only chain used to hand out the whole schema")
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.Empty(t, names)
+}
+
+func TestAuthorizationLetsReflectionThroughWithTheToken(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	conn := serve(t, &logs, &echo{})
+
+	// Act
+	names, err := listServices(bearer(t.Context(), testToken), conn)
+
+	// Assert
+	require.NoError(t, err, "grpcurl with the token stays usable, which is the point of keeping it")
+	assert.Contains(t, names, echoDesc.ServiceName)
+}
+
+func TestAuthorizationRefusesAStreamWithoutAToken(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	service := &echo{}
+	conn := serve(t, &logs, service)
+
+	// Act
+	err := callEchoStream(t.Context(), conn)
+
+	// Assert
+	require.Error(t, err)
+	assert.Equal(t, codes.Unauthenticated, status.Code(err))
+	assert.Zero(t, service.streamCalls, "an unauthorized stream must not reach the handler")
+}
+
+func TestAuthorizationAcceptsAStreamWithTheRightToken(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	service := &echo{}
+	conn := serve(t, &logs, service)
+
+	// Act
+	err := callEchoStream(bearer(t.Context(), testToken), conn)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, service.streamCalls)
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		assert.Contains(collect, logs.String(), "kind=stream")
+	}, time.Second, 10*time.Millisecond,
+		"a stream reports under its own kind so its minutes stay out of the unary histogram")
+}
+
+func TestRecoveryKeepsTheProcessAliveOnAStream(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	service := &echo{panics: true}
+	conn := serve(t, &logs, service)
+
+	// Act
+	err := callEchoStream(bearer(t.Context(), testToken), conn)
+
+	// Assert
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Equal(t, "internal error", status.Convert(err).Message())
+
+	assert.Contains(t, logs.String(), "a grpc handler panicked")
+	assert.Contains(t, logs.String(), "the stream gave up")
+
+	service.panics = false
+
+	require.NoError(t, callEchoStream(bearer(t.Context(), testToken), conn),
+		"grpc-go does not recover a stream handler either")
+}
+
+func TestAuthorizationLetsTheHealthWatchThrough(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs safeBuffer
+
+	conn := serve(t, &logs, &echo{})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	// Act
+	watch, err := healthpb.NewHealthClient(conn).Watch(ctx, &healthpb.HealthCheckRequest{})
+	require.NoError(t, err)
+
+	response, err := watch.Recv()
+
+	// Assert
+	require.NoError(t, err,
+		"Watch is a stream, and the exemption has to cover the whole health service")
+	assert.Equal(t, healthpb.HealthCheckResponse_SERVING, response.GetStatus())
 }

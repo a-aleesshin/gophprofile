@@ -57,6 +57,11 @@ func New(cfg Config, logger *slog.Logger, register func(*grpc.Server)) (*Server,
 			logging(logger),
 			authorization(cfg.Token),
 		),
+		grpc.ChainStreamInterceptor(
+			recoveryStream(logger),
+			loggingStream(logger),
+			authorizationStream(cfg.Token),
+		),
 	)
 
 	register(server)

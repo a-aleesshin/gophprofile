@@ -229,7 +229,7 @@ func TestApplyFactsRejectAnEmptyFact(t *testing.T) {
 	}
 }
 
-func TestApplyFileProcessed_SkipsALostRaceOnSave(t *testing.T) {
+func TestApplyFileProcessed_RetriesALostRaceOnTheAvatar(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
@@ -244,7 +244,226 @@ func TestApplyFileProcessed_SkipsALostRaceOnSave(t *testing.T) {
 	})
 
 	// Assert
-	require.NoError(t, err,
-		"somebody else moved the row, and the fact will be redelivered if it still matters")
-	assert.True(t, got.Skipped)
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"a conflict means the fact was not applied, so the consumer has to deliver it again")
+	assert.False(t, got.Skipped,
+		"reporting it as skipped would ack the message and lose the fact for good")
+}
+
+func TestApplyFileProcessed_RetriesALostRaceOnTheProfile(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newFactsHarness(t, testProcessingAvatar(t, testUserID(t, "user-1")), false)
+	h.profiles.saveErr = ErrStaleVersion
+
+	// Act
+	got, err := h.processed.Handle(context.Background(), FileProcessedFact{
+		FileID:   h.avatar.FileID(),
+		Snapshot: testSnapshot(t),
+		Variants: testVariants(t),
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"a change to the profile for an unrelated reason must not cost the avatar its variants")
+	assert.False(t, got.Skipped)
+	assert.Empty(t, h.avatars.saved,
+		"nothing is written, and the retry reads both rows again")
+}
+
+func TestApplyFileRejected_RetriesALostRace(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newFactsHarness(t, testProcessingAvatar(t, testUserID(t, "user-1")), false)
+	h.avatars.saveErr = ErrStaleVersion
+
+	// Act
+	got, err := h.rejected.Handle(context.Background(), FileRejectedFact{
+		FileID: h.avatar.FileID(),
+		Reason: "too_large",
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"the user has to learn why the upload failed, so the fact cannot be dropped")
+	assert.False(t, got.Skipped)
+}
+
+func TestApplyFileDeleted_RetriesALostRace(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newFactsHarness(t, testProcessingAvatar(t, testUserID(t, "user-1")), true)
+	h.avatars.saveErr = ErrStaleVersion
+
+	// Act
+	got, err := h.deleted.Handle(context.Background(), FileDeletedFact{
+		FileID: h.avatar.FileID(),
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"the objects are already gone, so the row has to follow them even after a conflict")
+	assert.False(t, got.Skipped)
+}
+
+func testAvatarAt(t *testing.T, user domain.UserID, created time.Time) domain.Avatar {
+	t.Helper()
+
+	id, err := domain.NewAvatarID()
+	require.NoError(t, err)
+
+	avatar, err := domain.NewAvatar(domain.NewAvatarParams{
+		ID:       id,
+		UserID:   user,
+		UploadID: testUploadRef(t),
+		Now:      created,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, avatar.StartProcessing(testFileRef(t), created))
+
+	return avatar
+}
+
+func newOrderingHarness(t *testing.T, older, newer domain.Avatar) factsHarness {
+	t.Helper()
+
+	profile, err := domain.NewProfile(older.UserID(), testNow)
+	require.NoError(t, err)
+
+	require.NoError(t, newer.MarkReady(testSnapshot(t), testVariants(t), newer.CreatedAt()))
+	require.NoError(t, profile.SetCurrentAvatar(newer.ID(), newer.CreatedAt()))
+
+	avatars := &stubAvatars{
+		avatars: map[string]domain.Avatar{
+			older.ID().String(): older,
+			newer.ID().String(): newer,
+		},
+		byFile: map[string]domain.Avatar{
+			older.FileID().String(): older,
+			newer.FileID().String(): newer,
+		},
+	}
+
+	profiles := &stubProfiles{
+		profiles: map[string]domain.Profile{older.UserID().String(): profile},
+	}
+	tx := &stubTransactor{}
+	now := fixedClock{now: testNow.Add(2 * time.Hour)}
+
+	return factsHarness{
+		processed: NewApplyFileProcessedHandler(avatars, profiles, tx, now),
+		avatars:   avatars,
+		profiles:  profiles,
+		tx:        tx,
+		avatar:    older,
+	}
+}
+
+func TestApplyFileProcessed_KeepsTheNewerAvatarCurrent(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	user := testUserID(t, "user-1")
+	older := testAvatarAt(t, user, testNow)
+	newer := testAvatarAt(t, user, testNow.Add(time.Hour))
+
+	h := newOrderingHarness(t, older, newer)
+
+	// Act
+	got, err := h.processed.Handle(context.Background(), FileProcessedFact{
+		FileID:   older.FileID(),
+		Snapshot: testSnapshot(t),
+		Variants: testVariants(t),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.False(t, got.Promoted,
+		"the facts are keyed by file, so the older upload can be applied last")
+	assert.True(t, got.Status.Equal(domain.AvatarStatusReady),
+		"it still becomes ready, it just does not become current")
+
+	assert.Empty(t, h.profiles.saved,
+		"nothing about the profile changed, so it must not take a version bump either")
+	require.Len(t, h.avatars.saved, 1)
+	assert.True(t, h.avatars.saved[0].ID().Equal(older.ID()))
+}
+
+func TestApplyFileProcessed_PromotesANewerAvatarOverTheCurrentOne(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	user := testUserID(t, "user-1")
+	older := testAvatarAt(t, user, testNow)
+	newer := testAvatarAt(t, user, testNow.Add(time.Hour))
+
+	h := newOrderingHarness(t, newer, older)
+
+	// Act
+	got, err := h.processed.Handle(context.Background(), FileProcessedFact{
+		FileID:   newer.FileID(),
+		Snapshot: testSnapshot(t),
+		Variants: testVariants(t),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Promoted)
+
+	require.Len(t, h.profiles.saved, 1)
+	assert.True(t, h.profiles.saved[0].CurrentAvatarID().Equal(newer.ID()),
+		"the newest ready avatar is the one the gallery and the redirect agree on")
+}
+
+func TestApplyFileProcessed_PromotesWhenTheProfileHasNoCurrentAvatar(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newFactsHarness(t, testProcessingAvatar(t, testUserID(t, "user-1")), false)
+
+	// Act
+	got, err := h.processed.Handle(context.Background(), FileProcessedFact{
+		FileID:   h.avatar.FileID(),
+		Snapshot: testSnapshot(t),
+		Variants: testVariants(t),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Promoted)
+	require.Len(t, h.profiles.saved, 1)
+	assert.True(t, h.profiles.saved[0].CurrentAvatarID().Equal(h.avatar.ID()))
+}
+
+func TestApplyFileProcessed_PromotesOverADeletedCurrentAvatar(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	user := testUserID(t, "user-1")
+	older := testAvatarAt(t, user, testNow)
+	newer := testAvatarAt(t, user, testNow.Add(time.Hour))
+
+	h := newOrderingHarness(t, older, newer)
+
+	gone := h.avatars.avatars[newer.ID().String()]
+	require.NoError(t, gone.MarkDeleted(testNow.Add(90*time.Minute)))
+	h.avatars.avatars[newer.ID().String()] = gone
+
+	// Act
+	got, err := h.processed.Handle(context.Background(), FileProcessedFact{
+		FileID:   older.FileID(),
+		Snapshot: testSnapshot(t),
+		Variants: testVariants(t),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Promoted,
+		"a deleted avatar is not a reason to keep the user on the placeholder")
+	require.Len(t, h.profiles.saved, 1)
+	assert.True(t, h.profiles.saved[0].CurrentAvatarID().Equal(older.ID()))
 }

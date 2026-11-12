@@ -24,7 +24,9 @@ x-profile-env: &profile-env
   POLICY_MAX_AVATARS_PER_USER: ${POLICY_MAX_AVATARS_PER_USER:-20}
   HEALTH_ADDR: ":8081"
   METRICS_ADDR: ":9100"
-  PPROF_ADDR: ":6060"
+  # pprof is off unless an address is given. Set PPROF_ADDR to 127.0.0.1:6060 to
+  # reach it through docker exec; anything wider hands out heap dumps for free.
+  PPROF_ADDR: ${PPROF_ADDR:-}
 
 services:
   file-db:
@@ -168,7 +170,7 @@ services:
       HTTP_ADDR: ":8080"
       HEALTH_ADDR: ":8081"
       METRICS_ADDR: ":9100"
-      PPROF_ADDR: ":6060"
+      PPROF_ADDR: ${PPROF_ADDR:-}
       LINK_PUBLIC_BASE: ${PUBLIC_BASE:-http://localhost:8000}
       LINK_SECRET: ${LINK_SECRET:?set LINK_SECRET to at least 32 bytes}
       GRPC_TOKEN: ${GRPC_TOKEN:?set GRPC_TOKEN to at least 32 bytes}
@@ -195,7 +197,7 @@ services:
       <<: *file-env
       HEALTH_ADDR: ":8081"
       METRICS_ADDR: ":9100"
-      PPROF_ADDR: ":6060"
+      PPROF_ADDR: ${PPROF_ADDR:-}
       RABBIT_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672/
       KAFKA_BROKERS: kafka:9092
       KAFKA_TOPIC: gophprofile.profile.v1

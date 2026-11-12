@@ -157,9 +157,6 @@ func TestLoadWorkerRequiresEveryMandatoryVariable(t *testing.T) {
 		"POLICIES_PATH",
 		"RABBIT_URL",
 		"KAFKA_BROKERS",
-		"HEALTH_ADDR",
-		"METRICS_ADDR",
-		"PPROF_ADDR",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			setWorkerEnv(t)
@@ -181,10 +178,6 @@ func TestLoadServerRequiresEveryMandatoryVariable(t *testing.T) {
 		"LINK_SECRET",
 		"GRPC_ADDR",
 		"GRPC_TOKEN",
-		"HTTP_ADDR",
-		"HEALTH_ADDR",
-		"METRICS_ADDR",
-		"PPROF_ADDR",
 	} {
 		t.Run(missing, func(t *testing.T) {
 			setServerEnv(t)
@@ -194,4 +187,39 @@ func TestLoadServerRequiresEveryMandatoryVariable(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+// Addresses are no longer required by an env tag, because pprof has to be
+// allowed to stay unset. The check moved to httpserver.New, which refuses an
+// empty address and names the section — see its own tests. What this one keeps
+// is the promise that an unset pprof is a valid configuration and a switched
+// off server, not a silently listening one.
+func TestPprofIsOptionalAndOffByDefault(t *testing.T) {
+	// Arrange
+	setServerEnv(t)
+	t.Setenv("PPROF_ADDR", "")
+
+	// Act
+	cfg, err := LoadServer()
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, cfg.PprofServer.Disabled())
+	assert.False(t, cfg.MetricsServer.Disabled(), "metrics stay on")
+	assert.False(t, cfg.HealthServer.Disabled(), "so does health")
+}
+
+func TestPprofTurnsOnWhenAnAddressIsGiven(t *testing.T) {
+	// Arrange
+	setServerEnv(t)
+	t.Setenv("PPROF_ADDR", "127.0.0.1:6060")
+
+	// Act
+	cfg, err := LoadServer()
+
+	// Assert
+	require.NoError(t, err)
+	assert.False(t, cfg.PprofServer.Disabled())
+	assert.Equal(t, "127.0.0.1:6060", cfg.PprofServer.Addr,
+		"loopback keeps the dumps inside the container")
 }

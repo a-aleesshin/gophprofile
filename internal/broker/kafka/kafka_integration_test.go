@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,10 +49,19 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func testTopic(t *testing.T) string {
+var testRuns atomic.Int64
+
+func testRunID(t *testing.T) string {
 	t.Helper()
 
-	topic := "test." + t.Name()
+	return strings.ReplaceAll(t.Name(), "/", ".") +
+		"." + strconv.FormatInt(testRuns.Add(1), 10)
+}
+
+func testTopic(t *testing.T, id string) string {
+	t.Helper()
+
+	topic := "test." + id
 
 	client, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
 	require.NoError(t, err)
@@ -58,19 +70,21 @@ func testTopic(t *testing.T) string {
 
 	admin := kadm.NewClient(client)
 
-	_, err = admin.CreateTopics(t.Context(), 3, 1, nil, topic)
+	created, err := admin.CreateTopics(t.Context(), 3, 1, nil, topic)
 	require.NoError(t, err)
+	require.NoError(t, created.Error(),
+		"a topic that already exists means two runs are about to share offsets")
 
 	return topic
 }
 
-func testConfig(t *testing.T, topic string) Config {
+func testConfig(t *testing.T, id, topic string) Config {
 	t.Helper()
 
 	return Config{
 		Brokers:      brokers,
 		Topic:        topic,
-		Group:        "group." + t.Name(),
+		Group:        "group." + id,
 		RetryBackoff: 100 * time.Millisecond,
 	}
 }
@@ -78,7 +92,8 @@ func testConfig(t *testing.T, topic string) Config {
 func setup(t *testing.T) (Config, *Producer, *Consumer) {
 	t.Helper()
 
-	cfg := testConfig(t, testTopic(t))
+	id := testRunID(t)
+	cfg := testConfig(t, id, testTopic(t, id))
 
 	producer, err := NewProducer(cfg, pgtx.New(nil))
 	require.NoError(t, err)

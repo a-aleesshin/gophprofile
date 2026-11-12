@@ -129,10 +129,6 @@ func TestLoadRefusesAMissingRequiredVariable(t *testing.T) {
 		"CONTENT_PLACEHOLDER",
 		"FILE_ADDR",
 		"FILE_TOKEN",
-		"HEALTH_ADDR",
-		"METRICS_ADDR",
-		"PPROF_ADDR",
-		"HTTP_ADDR",
 	}
 
 	for _, name := range required {
@@ -167,4 +163,34 @@ func TestLoadMigrateNeedsOnlyTheDatabase(t *testing.T) {
 		"the migration job runs before anything else exists, so it must not ask for more")
 	assert.NotEmpty(t, cfg.Postgres.DSN)
 	assert.Equal(t, "info", cfg.Log.Level)
+}
+
+// See the same pair in file: addresses are validated by httpserver.New now, and
+// pprof is allowed to be unset on purpose.
+func TestPprofIsOptionalAndOffByDefault(t *testing.T) {
+	// Arrange
+	setServerEnv(t)
+	t.Setenv("PPROF_ADDR", "")
+
+	// Act
+	cfg, err := LoadServer()
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, cfg.PprofServer.Disabled())
+	assert.False(t, cfg.MetricsServer.Disabled(), "metrics stay on")
+}
+
+func TestPprofTurnsOnWhenAnAddressIsGiven(t *testing.T) {
+	// Arrange
+	setServerEnv(t)
+	t.Setenv("PPROF_ADDR", "127.0.0.1:6060")
+
+	// Act
+	cfg, err := LoadServer()
+
+	// Assert
+	require.NoError(t, err)
+	assert.False(t, cfg.PprofServer.Disabled())
+	assert.Equal(t, "127.0.0.1:6060", cfg.PprofServer.Addr)
 }

@@ -167,24 +167,33 @@ func TestAvatarsCountOnlyWhatTheUserStillHas(t *testing.T) {
 	assert.True(t, deleted.Status().Equal(domain.AvatarStatusDeleted))
 }
 
+const watchdogWindow = 50 * time.Hour
+
 func TestAvatarsSelectWhatTheWatchdogShouldLookAt(t *testing.T) {
 	t.Parallel()
+	takeSweepLock(t)
 
 	// Arrange
 	avatars := NewAvatars(sharedDB)
 	user := newUser(t)
+	long := time.Now().Add(-2 * watchdogWindow)
 
-	stuck := newPendingAvatar(t, user)
-	require.NoError(t, stuck.StartProcessing(testFileRef(t), time.Now().Add(-time.Hour)))
+	stuck := newPendingAvatarAt(t, user, long)
+	require.NoError(t, stuck.StartProcessing(testFileRef(t), long))
 	require.NoError(t, avatars.Save(t.Context(), &stuck))
 
-	fresh := newPendingAvatar(t, user)
-	done := newReadyAvatar(t, user)
+	fresh := newPendingAvatarAt(t, user, time.Now().Add(-watchdogWindow+time.Hour))
+
+	done := newPendingAvatarAt(t, user, long)
+	require.NoError(t, done.StartProcessing(testFileRef(t), long))
+	require.NoError(t, avatars.Save(t.Context(), &done))
+	require.NoError(t, done.MarkReady(testSnapshot(t), testVariants(t), long))
+	require.NoError(t, avatars.Save(t.Context(), &done))
 
 	// Act
 	stale, err := avatars.StaleByStatus(t.Context(),
 		[]domain.AvatarStatus{domain.AvatarStatusPending, domain.AvatarStatusProcessing},
-		time.Now().Add(-30*time.Minute), 50)
+		time.Now().Add(-watchdogWindow), 50)
 
 	// Assert
 	require.NoError(t, err)
@@ -196,5 +205,5 @@ func TestAvatarsSelectWhatTheWatchdogShouldLookAt(t *testing.T) {
 
 	assert.True(t, found[stuck.ID().String()])
 	assert.False(t, found[fresh.ID().String()], "a recent upload is still allowed to finish")
-	assert.False(t, found[done.ID().String()])
+	assert.False(t, found[done.ID().String()], "a ready avatar is nobody's problem")
 }

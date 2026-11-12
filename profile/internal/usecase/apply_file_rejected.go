@@ -56,15 +56,9 @@ func (h *ApplyFileRejectedHandler) Handle(
 		return ApplyFactResult{}, err
 	}
 
-	err = h.tx.InTx(ctx, func(ctx context.Context) error {
+	if err := h.tx.InTx(ctx, func(ctx context.Context) error {
 		return h.avatars.Save(ctx, &avatar)
-	})
-
-	if errors.Is(err, ErrStaleVersion) {
-		return ApplyFactResult{Skipped: true}, nil
-	}
-
-	if err != nil {
+	}); err != nil {
 		return ApplyFactResult{}, err
 	}
 

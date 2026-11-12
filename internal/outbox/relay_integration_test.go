@@ -906,21 +906,93 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	first, err := pruner.Prune(context.Background())
+	first, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	second, err := pruner.Prune(context.Background())
+	second, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	third, err := pruner.Prune(context.Background())
+	third, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	fourth, err := pruner.Prune(context.Background())
+	fourth, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
 	// Assert
 	assert.Equal(t, []int64{2, 2, 1, 0}, []int64{first, second, third, fourth},
 		"one statement per batch keeps the lock and the wal bounded")
+}
+
+func TestPrunerDrainsThePastInOnePass(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	for n := range 5 {
+		insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now)
+	}
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET published_at = $1`, now.Add(-100*time.Hour))
+	require.NoError(t, err)
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	again, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, int64(5), removed,
+		"a pass that stopped after one batch could never keep up with the relay")
+	assert.Zero(t, again)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM outbox`).Scan(&left))
+	assert.Zero(t, left)
+}
+
+func TestPrunerStopsOnACancelledContext(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	for n := range 3 {
+		insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now)
+	}
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET published_at = $1`, now.Add(-100*time.Hour))
+	require.NoError(t, err)
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 1})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Act
+	removed, err := pruner.Prune(ctx)
+
+	// Assert
+	require.Equal(t, context.Canceled, err,
+		"the pass checks the context between batches itself, so shutdown does not "+
+			"wait for a long backlog and the error arrives unwrapped by the driver")
+	assert.Zero(t, removed)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM outbox`).Scan(&left))
+	assert.Equal(t, 3, left)
 }
 
 func TestNewPrunerRejectsABrokenConfig(t *testing.T) {

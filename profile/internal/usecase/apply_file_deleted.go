@@ -74,7 +74,7 @@ func (h *ApplyFileDeletedHandler) Handle(
 		}
 	}
 
-	err = h.tx.InTx(ctx, func(ctx context.Context) error {
+	if err := h.tx.InTx(ctx, func(ctx context.Context) error {
 		if wasCurrent {
 			if err := h.profiles.Save(ctx, &profile); err != nil {
 				return err
@@ -82,13 +82,7 @@ func (h *ApplyFileDeletedHandler) Handle(
 		}
 
 		return h.avatars.Save(ctx, &avatar)
-	})
-
-	if errors.Is(err, ErrStaleVersion) {
-		return ApplyFactResult{Skipped: true}, nil
-	}
-
-	if err != nil {
+	}); err != nil {
 		return ApplyFactResult{}, err
 	}
 

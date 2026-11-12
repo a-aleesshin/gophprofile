@@ -390,14 +390,99 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 	counts := make([]int64, 0, 4)
 
 	for range 4 {
-		removed, pruneErr := pruner.Prune(t.Context())
+		removed, pruneErr := pruner.pruneBatch(t.Context(), now.Add(-time.Hour))
 		require.NoError(t, pruneErr)
 
 		counts = append(counts, removed)
 	}
 
 	// Assert
-	assert.Equal(t, []int64{2, 2, 1, 0}, counts)
+	assert.Equal(t, []int64{2, 2, 1, 0}, counts,
+		"one statement per batch keeps the lock and the wal bounded")
+}
+
+func TestPrunerDrainsThePastInOnePass(t *testing.T) {
+	// Arrange
+	resetProcessed(t)
+
+	in := NewInbox(sharedDB)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	consumer := "prune.drain"
+
+	for range 5 {
+		id := uuid.New()
+
+		_, err := in.Mark(t.Context(), consumer, id)
+		require.NoError(t, err)
+
+		_, err = sharedDB.Pool().Exec(t.Context(), `
+			UPDATE processed_messages SET processed_at = $3
+			 WHERE consumer = $1 AND message_id = $2`, consumer, id, now.Add(-400*time.Hour))
+		require.NoError(t, err)
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(t.Context())
+	require.NoError(t, err)
+
+	again, err := pruner.Prune(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, int64(5), removed,
+		"a pass that stopped after one batch could never keep up with the consumer")
+	assert.Zero(t, again)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT count(*) FROM processed_messages WHERE consumer = $1`, consumer).Scan(&left))
+	assert.Zero(t, left)
+}
+
+func TestPrunerStopsOnACancelledContext(t *testing.T) {
+	// Arrange
+	resetProcessed(t)
+
+	in := NewInbox(sharedDB)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	consumer := "prune.cancelled"
+
+	for range 3 {
+		id := uuid.New()
+
+		_, err := in.Mark(t.Context(), consumer, id)
+		require.NoError(t, err)
+
+		_, err = sharedDB.Pool().Exec(t.Context(), `
+			UPDATE processed_messages SET processed_at = $3
+			 WHERE consumer = $1 AND message_id = $2`, consumer, id, now.Add(-400*time.Hour))
+		require.NoError(t, err)
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
+		PrunerConfig{Retention: time.Hour, BatchSize: 1})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// Act
+	removed, err := pruner.Prune(ctx)
+
+	// Assert
+	require.Equal(t, context.Canceled, err,
+		"the pass checks the context between batches itself, so shutdown does not "+
+			"wait for a long backlog and the error arrives unwrapped by the driver")
+	assert.Zero(t, removed)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT count(*) FROM processed_messages WHERE consumer = $1`, consumer).Scan(&left))
+	assert.Equal(t, 3, left)
 }
 
 func TestNewPrunerRejectsABrokenConfig(t *testing.T) {

@@ -134,6 +134,14 @@ func (a *Avatar) IsDeleted() bool { return !a.deletedAt.IsZero() }
 
 func (a *Avatar) OwnedBy(user UserID) bool { return a.userID.Equal(user) }
 
+func (a *Avatar) IsNewerThan(other Avatar) bool {
+	if !a.createdAt.Equal(other.createdAt) {
+		return a.createdAt.After(other.createdAt)
+	}
+
+	return a.id.Compare(other.id) > 0
+}
+
 func (a *Avatar) SetVersion(version int64) error {
 	if version <= 0 {
 		return fmt.Errorf("%w: version must be positive (got %d)", ErrInvalidAvatar, version)

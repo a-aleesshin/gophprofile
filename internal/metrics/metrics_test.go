@@ -119,14 +119,21 @@ func TestGRPCCallIsCountedByCode(t *testing.T) {
 	grpcRequests.Reset()
 
 	// Act
-	ObserveGRPCCall("/gophprofile.file.v1.FileService/GetFile", "NotFound", time.Millisecond)
-	ObserveGRPCCall("/gophprofile.file.v1.FileService/GetFile", "OK", time.Millisecond)
+	ObserveGRPCCall(KindUnary,
+		"/gophprofile.file.v1.FileService/GetFile", "NotFound", time.Millisecond)
+	ObserveGRPCCall(KindUnary,
+		"/gophprofile.file.v1.FileService/GetFile", "OK", time.Millisecond)
+	ObserveGRPCCall(KindStream,
+		"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo", "OK", time.Minute)
 
 	// Assert
 	assert.InDelta(t, 1, testutil.ToFloat64(grpcRequests.WithLabelValues(
-		"/gophprofile.file.v1.FileService/GetFile", "NotFound")), 0.001)
+		KindUnary, "/gophprofile.file.v1.FileService/GetFile", "NotFound")), 0.001)
 	assert.InDelta(t, 1, testutil.ToFloat64(grpcRequests.WithLabelValues(
-		"/gophprofile.file.v1.FileService/GetFile", "OK")), 0.001)
+		KindUnary, "/gophprofile.file.v1.FileService/GetFile", "OK")), 0.001)
+	assert.InDelta(t, 1, testutil.ToFloat64(grpcRequests.WithLabelValues(
+		KindStream, "/grpc.reflection.v1.ServerReflection/ServerReflectionInfo", "OK")), 0.001,
+		"a stream keeps its own series so its minutes cannot move the unary quantiles")
 }
 
 func TestEverySeriesIsNamespaced(t *testing.T) {
@@ -135,7 +142,7 @@ func TestEverySeriesIsNamespaced(t *testing.T) {
 	SetOutboxBacklogAge("kafka", time.Second)
 	ObserveInbox("file.worker", 1, 0, 0, 0)
 	ObserveHTTPRequest("GET /healthz", "GET", 200, time.Millisecond)
-	ObserveGRPCCall("/x/Y", "OK", time.Millisecond)
+	ObserveGRPCCall(KindUnary, "/x/Y", "OK", time.Millisecond)
 
 	// Act
 	problems, err := testutil.GatherAndLint(prometheus.DefaultGatherer)

@@ -14,6 +14,8 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
 )
 
+const staleWindow = 50 * time.Hour
+
 func testFile(t *testing.T) domain.File {
 	t.Helper()
 
@@ -263,7 +265,12 @@ func TestFiles_StaleByStatus(t *testing.T) {
 	repo := NewFiles(sharedDB)
 	ctx := t.Context()
 
-	long := time.Now().Add(-2 * time.Hour)
+	long := time.Now().Add(-2 * staleWindow)
+
+	oldest := testFile(t)
+	require.NoError(t, repo.Create(ctx, &oldest))
+	require.NoError(t, oldest.StartProcessing(long.Add(-time.Hour)))
+	require.NoError(t, repo.Save(ctx, &oldest))
 
 	stuck := testFile(t)
 	require.NoError(t, repo.Create(ctx, &stuck))
@@ -275,9 +282,11 @@ func TestFiles_StaleByStatus(t *testing.T) {
 	require.NoError(t, fresh.StartProcessing(time.Now()))
 	require.NoError(t, repo.Save(ctx, &fresh))
 
+	before := time.Now().Add(-staleWindow)
+
 	found, err := repo.StaleByStatus(ctx,
 		[]domain.FileStatus{domain.FileStatusProcessing, domain.FileStatusDeleting},
-		time.Now().Add(-time.Hour), 100)
+		before, 100)
 	require.NoError(t, err)
 
 	ids := make(map[string]bool, len(found))
@@ -285,11 +294,20 @@ func TestFiles_StaleByStatus(t *testing.T) {
 		ids[file.ID().String()] = true
 	}
 
+	assert.True(t, ids[oldest.ID().String()])
 	assert.True(t, ids[stuck.ID().String()])
 	assert.False(t, ids[fresh.ID().String()], "a file updated a moment ago is not stale")
 
+	position := make(map[string]int, len(found))
+	for i, file := range found {
+		position[file.ID().String()] = i
+	}
+
+	assert.Less(t, position[oldest.ID().String()], position[stuck.ID().String()],
+		"the sweep takes the oldest first, so the limit cannot starve a stuck row")
+
 	limited, err := repo.StaleByStatus(ctx,
-		[]domain.FileStatus{domain.FileStatusProcessing}, time.Now(), 1)
+		[]domain.FileStatus{domain.FileStatusProcessing}, before, 1)
 	require.NoError(t, err)
-	assert.Len(t, limited, 1)
+	assert.Len(t, limited, 1, "the limit caps what one sweep takes on")
 }

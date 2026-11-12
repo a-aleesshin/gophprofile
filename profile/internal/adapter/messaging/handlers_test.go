@@ -320,6 +320,22 @@ func TestAnInfrastructureFailureIsRetried(t *testing.T) {
 		"a database that is down will be up again, and the fact must survive until then")
 }
 
+func TestALostRaceIsRetried(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	processed := &stubProcessed{err: usecase.ErrStaleVersion}
+
+	// Act
+	err := run(t, FactHandlers(processed, &stubRejected{}, &stubDeleted{}),
+		TypeFileProcessed, readyPayload())
+
+	// Assert
+	require.ErrorIs(t, err, usecase.ErrStaleVersion)
+	assert.NotErrorIs(t, err, inbox.ErrUnprocessable,
+		"a version conflict is momentary, and dropping the fact would leave the avatar processing")
+}
+
 func TestAPermanentFailureOfTheUseCaseIsDropped(t *testing.T) {
 	t.Parallel()
 

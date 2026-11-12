@@ -57,15 +57,20 @@ var (
 	grpcRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "grpc_requests_total",
-		Help:      "Calls served, by method and code.",
-	}, []string{"method", "code"})
+		Help:      "Calls served, by kind, method and code.",
+	}, []string{"kind", "method", "code"})
 
 	grpcDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "grpc_request_duration_seconds",
-		Help:      "How long a call took, by method.",
+		Help:      "How long a call took, by kind and method.",
 		Buckets:   prometheus.DefBuckets,
-	}, []string{"method"})
+	}, []string{"kind", "method"})
+)
+
+const (
+	KindUnary  = "unary"
+	KindStream = "stream"
 )
 
 const (
@@ -113,9 +118,9 @@ func ObserveHTTPRequest(route, method string, status int, took time.Duration) {
 	httpDuration.WithLabelValues(route, method).Observe(took.Seconds())
 }
 
-func ObserveGRPCCall(method, code string, took time.Duration) {
-	grpcRequests.WithLabelValues(method, code).Inc()
-	grpcDuration.WithLabelValues(method).Observe(took.Seconds())
+func ObserveGRPCCall(kind, method, code string, took time.Duration) {
+	grpcRequests.WithLabelValues(kind, method, code).Inc()
+	grpcDuration.WithLabelValues(kind, method).Observe(took.Seconds())
 }
 
 // BacklogAgeForTest exposes the gauge so the relay's own integration test can

@@ -13,7 +13,7 @@ var ErrInvalidPrunerConfig = errors.New("invalid pruner config")
 
 type PrunerConfig struct {
 	Retention time.Duration `env:"OUTBOX_RETENTION" envDefault:"72h"`
-	BatchSize int           `env:"BATCH_SIZE" envDefault:"1000"`
+	BatchSize int           `env:"OUTBOX_BATCH_SIZE" envDefault:"1000"`
 }
 
 type Pruner struct {
@@ -40,6 +40,27 @@ func NewPruner(db *pgtx.DB, clock Clock, cfg PrunerConfig) (*Pruner, error) {
 func (p *Pruner) Prune(ctx context.Context) (int64, error) {
 	before := p.clock.Now().Add(-p.cfg.Retention)
 
+	var total int64
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+
+		removed, err := p.pruneBatch(ctx, before)
+		if err != nil {
+			return total, err
+		}
+
+		total += removed
+
+		if removed < int64(p.cfg.BatchSize) {
+			return total, nil
+		}
+	}
+}
+
+func (p *Pruner) pruneBatch(ctx context.Context, before time.Time) (int64, error) {
 	tag, err := p.db.Querier(ctx).Exec(ctx, `
 		DELETE FROM outbox
 		 WHERE id IN (

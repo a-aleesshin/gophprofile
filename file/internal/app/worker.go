@@ -306,15 +306,22 @@ func BuildWorker(
 		return fail(fmt.Errorf("build metrics server: %w", err))
 	}
 
+	runner.
+		Add("health server", healthServer).
+		Add("metrics server", metricsServer)
+
+	if cfg.PprofServer.Disabled() {
+		logger.Info("pprof is disabled", "reason", "no address configured")
+
+		return runner, shutdown, nil
+	}
+
 	pprofServer, err := httpserver.New("pprof", pprofHandler(), cfg.PprofServer, logger)
 	if err != nil {
 		return fail(fmt.Errorf("build pprof server: %w", err))
 	}
 
-	runner.
-		Add("health server", healthServer).
-		Add("metrics server", metricsServer).
-		Add("pprof server", pprofServer)
+	runner.Add("pprof server", pprofServer)
 
 	return runner, shutdown, nil
 }

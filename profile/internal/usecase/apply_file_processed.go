@@ -9,6 +9,7 @@ import (
 )
 
 type avatarByFileLoaderSaver interface {
+	ByID(ctx context.Context, id domain.AvatarID) (domain.Avatar, error)
 	ByFileID(ctx context.Context, fileID domain.FileRef) (domain.Avatar, error)
 	Save(ctx context.Context, avatar *domain.Avatar) error
 }
@@ -20,8 +21,9 @@ type FileProcessedFact struct {
 }
 
 type ApplyFactResult struct {
-	Status  domain.AvatarStatus
-	Skipped bool
+	Status   domain.AvatarStatus
+	Skipped  bool
+	Promoted bool
 }
 
 type ApplyFileProcessedHandler struct {
@@ -83,25 +85,58 @@ func (h *ApplyFileProcessedHandler) Handle(
 		return ApplyFactResult{}, err
 	}
 
-	if err := profile.SetCurrentAvatar(avatar.ID(), now); err != nil {
-		return ApplyFactResult{}, err
-	}
-
-	err = h.tx.InTx(ctx, func(ctx context.Context) error {
-		if err := h.profiles.Save(ctx, &profile); err != nil {
-			return err
-		}
-
-		return h.avatars.Save(ctx, &avatar)
-	})
-
-	if errors.Is(err, ErrStaleVersion) {
-		return ApplyFactResult{Skipped: true}, nil
-	}
-
+	promote, err := h.promotes(ctx, profile, avatar)
 	if err != nil {
 		return ApplyFactResult{}, err
 	}
 
-	return ApplyFactResult{Status: avatar.Status()}, nil
+	if promote {
+		if err := profile.SetCurrentAvatar(avatar.ID(), now); err != nil {
+			return ApplyFactResult{}, err
+		}
+	}
+
+	if err := h.tx.InTx(ctx, func(ctx context.Context) error {
+		if promote {
+			if err := h.profiles.Save(ctx, &profile); err != nil {
+				return err
+			}
+		}
+
+		return h.avatars.Save(ctx, &avatar)
+	}); err != nil {
+		return ApplyFactResult{}, err
+	}
+
+	return ApplyFactResult{Status: avatar.Status(), Promoted: promote}, nil
+}
+
+func (h *ApplyFileProcessedHandler) promotes(
+	ctx context.Context,
+	profile domain.Profile,
+	avatar domain.Avatar,
+) (bool, error) {
+	if profile.CurrentAvatarID().IsZero() {
+		return true, nil
+	}
+
+	if profile.CurrentAvatarID().Equal(avatar.ID()) {
+		return false, nil
+	}
+
+	current, err := h.avatars.ByID(ctx, profile.CurrentAvatarID())
+
+	if errors.Is(err, domain.ErrAvatarNotFound) {
+		return true, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	if current.IsDeleted() {
+		return true, nil
+	}
+
+	return avatar.IsNewerThan(current), nil
 }

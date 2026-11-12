@@ -148,6 +148,7 @@ func TestResolveCurrentAvatarRunsAgainstPostgres(t *testing.T) {
 
 func TestFailStuckAvatarsRunsAgainstPostgres(t *testing.T) {
 	t.Parallel()
+	takeSweepLock(t)
 
 	// Arrange
 	avatars := NewAvatars(sharedDB)

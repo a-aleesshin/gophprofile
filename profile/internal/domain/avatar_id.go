@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -45,6 +46,10 @@ func (a AvatarID) String() string { return a.value.String() }
 func (a AvatarID) IsZero() bool { return a.value == uuid.Nil }
 
 func (a AvatarID) Equal(other AvatarID) bool { return a.value == other.value }
+
+func (a AvatarID) Compare(other AvatarID) int {
+	return bytes.Compare(a.value[:], other.value[:])
+}
 
 func (a AvatarID) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("domain.AvatarID: serialize via DTO, not directly")

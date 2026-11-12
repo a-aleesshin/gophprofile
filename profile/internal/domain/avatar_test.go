@@ -330,3 +330,42 @@ func TestRestoreAvatarChecksWhatTheDatabaseCannot(t *testing.T) {
 		})
 	}
 }
+
+func testAvatarAt(t *testing.T, created time.Time) Avatar {
+	t.Helper()
+
+	id, err := NewAvatarID()
+	require.NoError(t, err)
+
+	avatar, err := NewAvatar(NewAvatarParams{
+		ID:       id,
+		UserID:   testUserID(t),
+		UploadID: testUploadRef(t),
+		Now:      created,
+	})
+	require.NoError(t, err)
+
+	return avatar
+}
+
+func TestAvatarIsNewerThanOrdersLikeTheGallery(t *testing.T) {
+	t.Parallel()
+
+	older := testAvatarAt(t, testNow)
+	newer := testAvatarAt(t, testNow.Add(time.Minute))
+
+	assert.True(t, newer.IsNewerThan(older))
+	assert.False(t, older.IsNewerThan(newer))
+	assert.False(t, older.IsNewerThan(older), "the order has to be strict")
+
+	first := testAvatarAt(t, testNow)
+	second := testAvatarAt(t, testNow)
+
+	if first.ID().Compare(second.ID()) > 0 {
+		first, second = second, first
+	}
+
+	assert.True(t, second.IsNewerThan(first),
+		"two avatars created in the same instant are still ordered, by the v7 id")
+	assert.False(t, first.IsNewerThan(second))
+}

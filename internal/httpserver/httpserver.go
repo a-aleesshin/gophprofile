@@ -12,7 +12,10 @@ import (
 var ErrInvalidConfig = errors.New("invalid http server config")
 
 type Config struct {
-	Addr            string        `env:"ADDR,required,notEmpty"`
+	// Addr has no required tag so that an optional server can be switched off by
+	// leaving it empty. New still refuses an empty address, so a server that is
+	// meant to run cannot start without one by accident.
+	Addr            string        `env:"ADDR"`
 	ReadTimeout     time.Duration `env:"READ_TIMEOUT" envDefault:"5s"`
 	WriteTimeout    time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
 	IdleTimeout     time.Duration `env:"IDLE_TIMEOUT" envDefault:"60s"`
@@ -33,7 +36,7 @@ func New(name string, handler http.Handler, cfg Config, logger *slog.Logger) (*S
 	case handler == nil:
 		return nil, fmt.Errorf("%w: handler is required", ErrInvalidConfig)
 	case cfg.Addr == "":
-		return nil, fmt.Errorf("%w: address is required", ErrInvalidConfig)
+		return nil, fmt.Errorf("%w: %s needs an address", ErrInvalidConfig, name)
 	case cfg.ShutdownTimeout <= 0:
 		return nil, fmt.Errorf("%w: shutdown timeout must be positive", ErrInvalidConfig)
 	case logger == nil:
@@ -54,6 +57,11 @@ func New(name string, handler http.Handler, cfg Config, logger *slog.Logger) (*S
 		logger:   logger,
 	}, nil
 }
+
+// Disabled says whether this section was left unset. An optional server, pprof
+// above all, is better absent than listening: it hands out heap and goroutine
+// dumps to anything that can reach the port.
+func (c Config) Disabled() bool { return c.Addr == "" }
 
 func (s *Server) Run(ctx context.Context) error {
 	failed := make(chan error, 1)

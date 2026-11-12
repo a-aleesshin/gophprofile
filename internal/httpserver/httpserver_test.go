@@ -150,3 +150,23 @@ func TestNewRejectsAnIncompleteServer(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigReportsWhenASectionIsUnset(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, Config{}.Disabled())
+	assert.True(t, Config{ReadTimeout: time.Second}.Disabled(),
+		"timeouts without an address still mean the section was never configured")
+	assert.False(t, Config{Addr: "127.0.0.1:6060"}.Disabled())
+}
+
+func TestNewStillRefusesAnEmptyAddress(t *testing.T) {
+	t.Parallel()
+
+	_, err := New("public", http.NotFoundHandler(),
+		Config{ShutdownTimeout: time.Second}, slog.New(slog.DiscardHandler))
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	assert.ErrorContains(t, err, "public",
+		"the message has to name the section, because the env tag no longer does")
+}

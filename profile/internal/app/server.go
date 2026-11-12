@@ -119,16 +119,25 @@ func BuildServer(
 		return fail(fmt.Errorf("build metrics server: %w", err))
 	}
 
+	runner := worker.New().
+		Add("public server", publicServer).
+		Add("health server", healthServer).
+		Add("metrics server", metricsServer)
+
+	// pprof is opt in: unset means no profiling endpoint at all, because the one
+	// it exposes needs no credentials and answers to anything on the network.
+	if cfg.PprofServer.Disabled() {
+		logger.Info("pprof is disabled", "reason", "no address configured")
+
+		return runner, shutdown, nil
+	}
+
 	pprofServer, err := httpserver.New("pprof", pprofHandler(), cfg.PprofServer, logger)
 	if err != nil {
 		return fail(fmt.Errorf("build pprof server: %w", err))
 	}
 
-	runner := worker.New().
-		Add("public server", publicServer).
-		Add("health server", healthServer).
-		Add("metrics server", metricsServer).
-		Add("pprof server", pprofServer)
+	runner.Add("pprof server", pprofServer)
 
 	return runner, shutdown, nil
 }

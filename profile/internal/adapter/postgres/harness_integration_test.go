@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,6 +149,15 @@ func newProfile(t *testing.T) domain.Profile {
 
 	return profile
 }
+
+func takeSweepLock(t *testing.T) {
+	t.Helper()
+
+	sweepLock.Lock()
+	t.Cleanup(sweepLock.Unlock)
+}
+
+var sweepLock sync.Mutex
 
 func newUser(t *testing.T) domain.UserID {
 	t.Helper()
