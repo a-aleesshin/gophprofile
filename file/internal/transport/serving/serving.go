@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/adapter/link"
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
+	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 )
 
 var ErrInvalidHandler = errors.New("invalid serving handler")
@@ -43,6 +45,7 @@ type signatureVerifier interface {
 type Handler struct {
 	variants variantServer
 	links    signatureVerifier
+	logger   *slog.Logger
 	timeout  time.Duration
 }
 
@@ -50,6 +53,7 @@ func NewHandler(
 	variants variantServer,
 	links signatureVerifier,
 	cfg Config,
+	logger *slog.Logger,
 ) (*Handler, error) {
 	switch {
 	case variants == nil:
@@ -58,13 +62,20 @@ func NewHandler(
 		return nil, fmt.Errorf("%w: signature verifier is required", ErrInvalidHandler)
 	case cfg.Timeout <= 0:
 		return nil, fmt.Errorf("%w: timeout must be positive", ErrInvalidHandler)
+	case logger == nil:
+		return nil, fmt.Errorf("%w: logger is required", ErrInvalidHandler)
 	}
 
-	return &Handler{variants: variants, links: links, timeout: cfg.Timeout}, nil
+	return &Handler{
+		variants: variants,
+		links:    links,
+		logger:   logger,
+		timeout:  cfg.Timeout,
+	}, nil
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc(routePattern, h.serve)
+	mux.Handle(routePattern, httpserver.Log(h.logger, http.HandlerFunc(h.serve)))
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {

@@ -44,7 +44,7 @@ func New(name string, handler http.Handler, cfg Config, logger *slog.Logger) (*S
 		name: name,
 		server: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           handler,
+			Handler:           Recover(logger, handler),
 			ReadHeaderTimeout: cfg.ReadTimeout,
 			ReadTimeout:       cfg.ReadTimeout,
 			WriteTimeout:      cfg.WriteTimeout,

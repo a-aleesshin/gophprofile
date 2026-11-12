@@ -1,10 +1,13 @@
 package serving
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,10 +73,12 @@ func okResult() usecase.ServeVariantResult {
 	}
 }
 
+func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
 func call(t *testing.T, server *stubServer, verifier *stubVerifier, target string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	handler, err := NewHandler(server, verifier, Config{Timeout: time.Second})
+	handler, err := NewHandler(server, verifier, Config{Timeout: time.Second}, testLogger())
 	require.NoError(t, err)
 
 	mux := http.NewServeMux()
@@ -130,7 +135,8 @@ func TestAnswersNotModified(t *testing.T) {
 
 	server := &stubServer{result: result}
 
-	handler, err := NewHandler(server, &stubVerifier{}, Config{Timeout: time.Second})
+	handler, err := NewHandler(server, &stubVerifier{}, Config{Timeout: time.Second},
+		testLogger())
 	require.NoError(t, err)
 
 	mux := http.NewServeMux()
@@ -325,10 +331,24 @@ func TestNewHandler(t *testing.T) {
 		variants variantServer
 		links    signatureVerifier
 		timeout  time.Duration
+		logger   *slog.Logger
 	}{
-		{name: "no server", links: &stubVerifier{}, timeout: time.Second},
-		{name: "no verifier", variants: &stubServer{}, timeout: time.Second},
-		{name: "no timeout", variants: &stubServer{}, links: &stubVerifier{}},
+		{
+			name: "no server", links: &stubVerifier{},
+			timeout: time.Second, logger: testLogger(),
+		},
+		{
+			name: "no verifier", variants: &stubServer{},
+			timeout: time.Second, logger: testLogger(),
+		},
+		{
+			name: "no timeout", variants: &stubServer{},
+			links: &stubVerifier{}, logger: testLogger(),
+		},
+		{
+			name: "no logger", variants: &stubServer{},
+			links: &stubVerifier{}, timeout: time.Second,
+		},
 	}
 
 	for _, test := range tests {
@@ -336,11 +356,44 @@ func TestNewHandler(t *testing.T) {
 			t.Parallel()
 
 			// Act
-			handler, err := NewHandler(test.variants, test.links, Config{Timeout: test.timeout})
+			handler, err := NewHandler(test.variants, test.links,
+				Config{Timeout: test.timeout}, test.logger)
 
 			// Assert
 			require.ErrorIs(t, err, ErrInvalidHandler)
 			assert.Nil(t, handler)
 		})
 	}
+}
+
+func TestServingLogsTheRouteAndSurvivesAPanic(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	var logs bytes.Buffer
+
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+
+	handler, err := NewHandler(&stubServer{err: errors.New("boom")}, &stubVerifier{},
+		Config{Timeout: time.Second}, logger)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet,
+		"/upload/0193abcd-ef01-7a23-8b45-0123456789ab/300x300.jpg", nil))
+
+	// Assert
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+
+	var record map[string]any
+
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record),
+		"the public endpoint of file used to log nothing at all")
+	assert.Equal(t, "http request", record["msg"])
+	assert.Equal(t, "ERROR", record["level"])
+	assert.Equal(t, "GET /upload/{file_id}/{object}", record["route"])
+	assert.Equal(t, float64(http.StatusInternalServerError), record["status"])
 }

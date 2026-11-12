@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
 
@@ -150,8 +151,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 }
 
+// Recovery is not here: httpserver.New wraps every server it builds, so a panic
+// cannot escape whichever handler it happens in. Logging is per route, because
+// the route pattern exists only after the mux has matched.
 func (h *Handler) wrap(next http.Handler) http.Handler {
-	return recovery(h.logger, logging(h.logger, next))
+	return httpserver.Log(h.logger, next)
 }
 
 func (h *Handler) withTimeout(r *http.Request) (context.Context, context.CancelFunc) {

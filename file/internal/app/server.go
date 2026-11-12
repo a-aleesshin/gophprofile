@@ -119,7 +119,7 @@ func BuildServer(
 
 	serveVariant := usecase.NewServeVariantHandler(policies, variants, store)
 
-	content, err := serving.NewHandler(serveVariant, links, cfg.Serving)
+	content, err := serving.NewHandler(serveVariant, links, cfg.Serving, logger)
 	if err != nil {
 		return fail(fmt.Errorf("build serving handler: %w", err))
 	}

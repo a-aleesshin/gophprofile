@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
@@ -213,7 +214,9 @@ func newHarness(t *testing.T) *harness {
 	mux := http.NewServeMux()
 	handler.Register(mux)
 
-	h.server = httptest.NewServer(mux)
+	// httpserver.New wraps the handler in production, so the test server has to
+	// as well, otherwise a panic here would look unhandled when it is not.
+	h.server = httptest.NewServer(httpserver.Recover(slog.New(slog.DiscardHandler), mux))
 	t.Cleanup(h.server.Close)
 
 	return h
