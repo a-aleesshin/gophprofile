@@ -167,3 +167,48 @@ func TestCreateAccessLink(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidCommand)
 	})
 }
+
+func TestCreateAccessLink_OriginalGetsASignedLinkInAPublicNamespace(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	handler, links, cmd := newAccessLinkHarness(t,
+		AccessPolicy{
+			Signed:         false,
+			SignedVariants: []domain.VariantName{domain.VariantNameOriginal},
+			MaxLinkTTL:     15 * time.Minute,
+		},
+		domain.FileStatusReady, false)
+
+	cmd.Variant = domain.VariantNameOriginal
+
+	// Act
+	got, err := handler.Handle(context.Background(), cmd)
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, testNow.Add(15*time.Minute), got.ExpiresAt,
+		"a stable url for the original would be refused by the serving endpoint")
+	assert.Equal(t, got.ExpiresAt, links.params.ExpiresAt)
+}
+
+func TestCreateAccessLink_ASignedVariantNeedsATtl(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	handler, _, cmd := newAccessLinkHarness(t,
+		AccessPolicy{
+			SignedVariants: []domain.VariantName{domain.VariantNameOriginal},
+		},
+		domain.FileStatusReady, false)
+
+	cmd.Variant = domain.VariantNameOriginal
+
+	// Act
+	_, err := handler.Handle(context.Background(), cmd)
+
+	// Assert
+	require.ErrorIs(t, err, ErrInvalidCommand,
+		"defence in depth: the policy loader now refuses such a configuration outright, "+
+			"so reaching this branch means the policy came from somewhere else")
+}

@@ -89,9 +89,9 @@ func toStatus(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 
 	case errors.Is(err, usecase.ErrStorageUnavailable):
-		return status.Error(codes.Unavailable, err.Error())
+		return status.Error(codes.Unavailable, "storage is unavailable")
 
 	default:
-		return status.Error(codes.Internal, err.Error())
+		return status.Error(codes.Internal, "internal error")
 	}
 }

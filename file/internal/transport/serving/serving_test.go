@@ -106,7 +106,8 @@ func TestServesTheVariant(t *testing.T) {
 	assert.Equal(t, "image/jpeg", header.Get("Content-Type"),
 		"the type comes from the database, not from the extension in the url")
 	assert.Equal(t, "9", header.Get("Content-Length"))
-	assert.Equal(t, "abc123", header.Get("ETag"))
+	assert.Equal(t, `"abc123"`, header.Get("ETag"),
+		"RFC 9110 wants a quoted-string, an unquoted tag is free for caches to mangle")
 	assert.Equal(t, "public, max-age=31536000, immutable", header.Get("Cache-Control"))
 	assert.Equal(t, "inline", header.Get("Content-Disposition"))
 	assert.Equal(t, "none", header.Get("Accept-Ranges"))
@@ -136,7 +137,7 @@ func TestAnswersNotModified(t *testing.T) {
 	handler.Register(mux)
 
 	request := httptest.NewRequest(http.MethodGet, path(testFileID, testVariant, testExt), nil)
-	request.Header.Set("If-None-Match", "abc123")
+	request.Header.Set("If-None-Match", `"abc123"`)
 
 	recorder := httptest.NewRecorder()
 
@@ -146,11 +147,11 @@ func TestAnswersNotModified(t *testing.T) {
 	// Assert
 	assert.Equal(t, http.StatusNotModified, recorder.Code)
 	assert.Empty(t, recorder.Body.String())
-	assert.Equal(t, "abc123", recorder.Header().Get("ETag"),
+	assert.Equal(t, `"abc123"`, recorder.Header().Get("ETag"),
 		"a 304 must carry the validators again")
 	assert.Equal(t, "public, max-age=31536000, immutable",
 		recorder.Header().Get("Cache-Control"))
-	assert.Equal(t, "abc123", server.cmd.IfNoneMatch)
+	assert.Equal(t, `"abc123"`, server.cmd.IfNoneMatch)
 }
 
 func TestRefusesANonCanonicalPath(t *testing.T) {

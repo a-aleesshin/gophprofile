@@ -145,7 +145,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {
 
 	header := w.Header()
 	header.Set("Cache-Control", result.CacheControl)
-	header.Set(headerETag, result.ETag)
+	header.Set(headerETag, `"`+result.ETag+`"`)
 	header.Set("Last-Modified", result.LastModified.UTC().Format(http.TimeFormat))
 
 	if result.AcceptRanges {

@@ -67,9 +67,12 @@ type stubObjectReadWriter struct {
 	deleted  []domain.Location
 	observer *stubTransactor
 	putInTx  bool
+	getCalls int
 }
 
 func (s *stubObjectReadWriter) Get(context.Context, domain.Location) (io.ReadCloser, error) {
+	s.getCalls++
+
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
@@ -502,4 +505,55 @@ func TestProcessFile_DeletedWhileRejecting(t *testing.T) {
 	assert.Empty(t, h.publisher.rejected)
 	assert.Empty(t, h.objects.deleted,
 		"nothing was written to storage, so there is nothing to clean up")
+}
+
+func TestProcessFile_KeepsObjectsWhenTheFileTurnedOutReady(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	received := testReceivedFile(t)
+
+	ready := testReceivedFile(t)
+	require.NoError(t, ready.StartProcessing(testNow))
+	readyDims, err := domain.NewDimensions(1920, 1080)
+	require.NoError(t, err)
+
+	require.NoError(t, ready.MarkReady(testUsecaseChecksum(t), readyDims, testNow))
+
+	h := newProcessHarness(t, received)
+	h.files.files = []domain.File{received, ready}
+	h.files.saveErr = errors.New("commit: connection reset by peer")
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), testProcessCommand(t, received))
+
+	// Assert
+	require.NoError(t, err,
+		"the row says ready, so the commit landed and this delivery has nothing left to do")
+	assert.True(t, got.Status.Equal(domain.FileStatusReady))
+
+	assert.Empty(t, h.objects.deleted,
+		"deleting here would strip a committed file of its bytes forever")
+}
+
+func TestProcessFile_CleansUpWhenTheFileIsNotReady(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	received := testReceivedFile(t)
+
+	processing := testReceivedFile(t)
+	require.NoError(t, processing.StartProcessing(testNow))
+
+	h := newProcessHarness(t, received)
+	h.files.files = []domain.File{received, processing}
+	h.files.saveErr = errors.New("deadlock detected")
+
+	// Act
+	_, err := h.handler.Handle(context.Background(), testProcessCommand(t, received))
+
+	// Assert
+	require.Error(t, err)
+	assert.NotEmpty(t, h.objects.deleted,
+		"nothing committed, so the variants written to storage are orphans")
 }

@@ -25,6 +25,8 @@ type DeleteObjectsResult struct {
 	Status domain.FileStatus
 }
 
+var ErrFileNotDeleting = errors.New("file is not marked for deletion")
+
 type DeleteObjectsHandler struct {
 	files     fileLoaderSaver
 	objects   objectDeleter
@@ -67,6 +69,13 @@ func (h *DeleteObjectsHandler) Handle(
 
 	if file.Status().Equal(domain.FileStatusDeleted) {
 		return DeleteObjectsResult{Status: file.Status()}, nil
+	}
+
+	if !file.Status().Equal(domain.FileStatusDeleting) {
+		return DeleteObjectsResult{}, fmt.Errorf(
+			"%w: %s is %q, so its objects must stay",
+			ErrFileNotDeleting, cmd.FileID.String(), file.Status().String(),
+		)
 	}
 
 	if err := h.objects.Delete(ctx, cmd.Locations...); err != nil {

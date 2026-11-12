@@ -138,3 +138,101 @@ func TestServeVariant(t *testing.T) {
 		}
 	})
 }
+
+func TestEtagMatches(t *testing.T) {
+	t.Parallel()
+
+	const etag = "abc123"
+
+	tests := []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{name: "no header", header: "", want: false},
+		{name: "a quoted tag, as the rfc writes it", header: `"abc123"`, want: true},
+		{name: "a bare tag, as a sloppy client sends it", header: "abc123", want: true},
+		{name: "a weak tag", header: `W/"abc123"`, want: true},
+		{name: "a list where ours is last", header: `"other", W/"abc123"`, want: true},
+		{name: "a list without ours", header: `"one", "two"`, want: false},
+		{name: "any tag at all", header: "*", want: true},
+		{name: "another tag", header: `"zzz"`, want: false},
+		{name: "surrounding whitespace", header: `  "abc123"  `, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Act
+			got := etagMatches(test.header, etag)
+
+			// Assert
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestEtagMatchesNothingWithoutAnEtag(t *testing.T) {
+	t.Parallel()
+
+	// Act & Assert
+	assert.False(t, etagMatches("*", ""),
+		"a variant without an etag cannot answer a conditional request")
+}
+
+func TestServeVariant_OriginalNeedsASignatureEvenInAPublicNamespace(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	id, err := domain.NewFileID()
+	require.NoError(t, err)
+
+	namespace, err := domain.NewNamespace("avatar")
+	require.NoError(t, err)
+
+	ext, err := domain.NewExtension("jpg")
+	require.NoError(t, err)
+
+	location, err := domain.NewVariantLocation(id, domain.VariantNameOriginal, ext)
+	require.NoError(t, err)
+
+	objects := &stubObjectReadWriter{}
+
+	handler := NewServeVariantHandler(
+		stubServingPolicies{policy: ServingPolicy{
+			Signed:         false,
+			SignedVariants: []domain.VariantName{domain.VariantNameOriginal},
+			CacheControl:   "public, max-age=31536000, immutable",
+		}},
+		&stubServableVariants{view: ServableVariantView{
+			Namespace: namespace,
+			Location:  location,
+			Ext:       "jpg",
+			MimeType:  "image/jpeg",
+			SizeBytes: 4096,
+			ETag:      testETag,
+			CreatedAt: testNow,
+		}},
+		objects,
+	)
+
+	cmd := ServeVariantCommand{FileID: id, Variant: domain.VariantNameOriginal, Ext: ext}
+
+	// Act
+	_, unsignedErr := handler.Handle(context.Background(), cmd)
+
+	// Assert
+	require.ErrorIs(t, unsignedErr, ErrSignatureRequired,
+		"the original keeps its exif, including gps, so a public namespace must not serve it bare")
+	require.Zero(t, objects.getCalls,
+		"the refusal must happen before the object is read, or the endpoint burns our traffic")
+
+	cmd.Signed = true
+
+	result, signedErr := handler.Handle(context.Background(), cmd)
+
+	require.NoError(t, signedErr)
+	assert.NotNil(t, result.Body)
+	assert.Equal(t, 1, objects.getCalls, "a signed request is served")
+}

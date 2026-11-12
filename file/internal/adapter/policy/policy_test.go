@@ -111,7 +111,8 @@ func TestRegistry_MapsEachPort(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "private, no-store", serving.CacheControl)
 	assert.Equal(t, "attachment", serving.Disposition)
-	assert.True(t, serving.AcceptRanges)
+	assert.False(t, serving.AcceptRanges,
+		"range is not implemented yet, and announcing it would be a false promise")
 }
 
 func TestRegistry_UnknownNamespace(t *testing.T) {
@@ -377,4 +378,116 @@ func TestRegistryProcessPolicyRejectsAnUnknownNamespace(t *testing.T) {
 
 	// Assert
 	require.ErrorIs(t, err, ErrUnknownNamespace)
+}
+
+func TestRegistryReportsSignedVariants(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	registry := loadTestRegistry(t)
+
+	// Act
+	access, err := registry.AccessPolicy(testNamespace(t, "avatar"))
+	require.NoError(t, err)
+
+	serving, err := registry.ServingPolicy(testNamespace(t, "avatar"))
+	require.NoError(t, err)
+
+	// Assert
+	assert.False(t, access.Signed, "the avatar namespace itself is public")
+
+	require.Len(t, access.SignedVariants, 1)
+	assert.Equal(t, "original", access.SignedVariants[0].String(),
+		"the original keeps its exif, so it is signed even in a public namespace")
+
+	require.Len(t, serving.SignedVariants, 1)
+	assert.Equal(t, "original", serving.SignedVariants[0].String())
+}
+
+func TestLoadRejectsBrokenVariantDeclarations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "the same variant twice", body: `
+namespaces:
+  avatar:
+    access: public
+    validator: image
+    upload_ttl: 15m
+    max_size_bytes: 1
+    allowed_mime: [image/jpeg]
+    max_pixels: 100
+    max_dimension: 100
+    min_dimension: 10
+    cache_control: "x"
+    variants:
+      - {name: 100x100, width: 100, height: 100, fit: cover, format: jpeg}
+      - {name: 100x100, width: 200, height: 200, fit: cover, format: jpeg}
+`},
+		{name: "signed_variants without link_max_ttl", body: `
+namespaces:
+  avatar:
+    access: public
+    validator: image
+    upload_ttl: 15m
+    max_size_bytes: 1
+    allowed_mime: [image/jpeg]
+    signed_variants: [original]
+    max_pixels: 100
+    max_dimension: 100
+    min_dimension: 10
+    cache_control: "x"
+`},
+		{name: "signed_variants names a variant nobody produces", body: `
+namespaces:
+  avatar:
+    access: public
+    validator: image
+    upload_ttl: 15m
+    max_size_bytes: 1
+    allowed_mime: [image/jpeg]
+    signed_variants: [does-not-exist]
+    max_pixels: 100
+    max_dimension: 100
+    min_dimension: 10
+    cache_control: "x"
+`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Act
+			registry, err := Load(writePolicies(t, test.body))
+
+			// Assert
+			require.ErrorIs(t, err, ErrInvalidPolicies)
+			assert.Nil(t, registry)
+		})
+	}
+}
+
+func TestShippedPoliciesCanReachEverySignedVariant(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	registry := loadTestRegistry(t)
+
+	// Act & Assert
+	for _, namespace := range registry.Namespaces() {
+		access, err := registry.AccessPolicy(namespace)
+		require.NoError(t, err)
+
+		if len(access.SignedVariants) == 0 {
+			continue
+		}
+
+		assert.Positive(t, access.MaxLinkTTL,
+			"namespace %q signs %v, so without link_max_ttl those variants have no way in at all",
+			namespace.String(), access.SignedVariants)
+	}
 }

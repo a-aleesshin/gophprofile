@@ -150,8 +150,11 @@ func TestDeleteObjects_UnexpectedStatusGoesToTheDeadLetterQueue(t *testing.T) {
 	h := newDeleteObjectsHarness(t, []domain.File{file})
 
 	_, err := h.handler.Handle(context.Background(), testDeleteObjectsCommand(t, file))
-	require.ErrorIs(t, err, domain.ErrForbiddenFileTransition,
-		"ready -> deleted is impossible, and a state this wrong should be looked at by a human")
+	require.ErrorIs(t, err, ErrFileNotDeleting,
+		"a state this wrong should be looked at by a human")
+
+	assert.Empty(t, h.objects.deleted,
+		"the status is checked before the delete, or a stray command destroys a live file")
 }
 
 func TestDeleteObjects_RejectsEmptyCommand(t *testing.T) {

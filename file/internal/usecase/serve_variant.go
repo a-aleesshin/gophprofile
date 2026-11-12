@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
@@ -16,10 +17,11 @@ var (
 )
 
 type ServingPolicy struct {
-	Signed       bool
-	CacheControl string
-	Disposition  string
-	AcceptRanges bool
+	Signed         bool
+	SignedVariants []domain.VariantName
+	CacheControl   string
+	Disposition    string
+	AcceptRanges   bool
 }
 
 type ServableVariantView struct {
@@ -82,6 +84,29 @@ func NewServeVariantHandler(
 	return &ServeVariantHandler{policies: policies, variants: variants, objects: objects}
 }
 
+func etagMatches(header, etag string) bool {
+	header = strings.TrimSpace(header)
+
+	switch {
+	case header == "" || etag == "":
+		return false
+	case header == "*":
+		return true
+	}
+
+	for candidate := range strings.SplitSeq(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		candidate = strings.Trim(candidate, `"`)
+
+		if candidate == etag {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *ServeVariantHandler) Handle(
 	ctx context.Context,
 	cmd ServeVariantCommand,
@@ -113,9 +138,10 @@ func (h *ServeVariantHandler) Handle(
 		)
 	}
 
-	if policy.Signed && !cmd.Signed {
+	if (policy.Signed || signedVariant(policy.SignedVariants, cmd.Variant)) && !cmd.Signed {
 		return ServeVariantResult{}, fmt.Errorf(
-			"%w: namespace %q", ErrSignatureRequired, view.Namespace.String(),
+			"%w: namespace %q variant %q",
+			ErrSignatureRequired, view.Namespace.String(), cmd.Variant.String(),
 		)
 	}
 
@@ -129,7 +155,7 @@ func (h *ServeVariantHandler) Handle(
 		AcceptRanges: policy.AcceptRanges,
 	}
 
-	if cmd.IfNoneMatch != "" && cmd.IfNoneMatch == result.ETag {
+	if etagMatches(cmd.IfNoneMatch, result.ETag) {
 		result.NotModified = true
 
 		return result, nil

@@ -51,6 +51,7 @@ type Namespace struct {
 	MaxSizeBytes      int64         `yaml:"max_size_bytes"`
 	ContentTypePrefix string        `yaml:"content_type_prefix"`
 	AllowedMime       []string      `yaml:"allowed_mime"`
+	SignedVariants    []string      `yaml:"signed_variants"`
 	MaxPixels         int64         `yaml:"max_pixels"`
 	MaxDimension      int           `yaml:"max_dimension"`
 	MinDimension      int           `yaml:"min_dimension"`
@@ -72,6 +73,7 @@ type Registry struct {
 	namespaces map[string]Namespace
 	mime       map[string]domain.MimeSet
 	variants   map[string][]domain.VariantName
+	signed     map[string][]domain.VariantName
 }
 
 func Load(path string) (*Registry, error) {
@@ -97,6 +99,7 @@ func Load(path string) (*Registry, error) {
 		namespaces: make(map[string]Namespace, len(parsed.Namespaces)),
 		mime:       make(map[string]domain.MimeSet, len(parsed.Namespaces)),
 		variants:   make(map[string][]domain.VariantName, len(parsed.Namespaces)),
+		signed:     make(map[string][]domain.VariantName, len(parsed.Namespaces)),
 	}
 
 	for name, namespace := range parsed.Namespaces {
@@ -109,9 +112,22 @@ func Load(path string) (*Registry, error) {
 			return nil, err
 		}
 
+		signed := make([]domain.VariantName, 0, len(namespace.SignedVariants))
+
+		for _, raw := range namespace.SignedVariants {
+			parsedName, nameErr := domain.NewVariantName(raw)
+			if nameErr != nil {
+				return nil, fmt.Errorf("%w: namespace %q signed_variants %q: %w",
+					ErrInvalidPolicies, name, raw, nameErr)
+			}
+
+			signed = append(signed, parsedName)
+		}
+
 		registry.namespaces[name] = namespace
 		registry.mime[name] = mime
 		registry.variants[name] = variants
+		registry.signed[name] = signed
 	}
 
 	return registry, nil
@@ -135,6 +151,10 @@ func validate(name string, ns Namespace) (domain.MimeSet, []domain.VariantName, 
 		return domain.MimeSet{}, nil, fail("upload_ttl must be positive")
 	case ns.Access == AccessSigned && ns.LinkMaxTTL <= 0:
 		return domain.MimeSet{}, nil, fail("a signed namespace needs link_max_ttl")
+	case len(ns.SignedVariants) > 0 && ns.LinkMaxTTL <= 0:
+		return domain.MimeSet{}, nil, fail(
+			"signed_variants %v need link_max_ttl, otherwise those variants cannot be reached at all",
+			ns.SignedVariants)
 	case ns.CacheControl == "":
 		return domain.MimeSet{}, nil, fail("cache_control is required")
 	case len(ns.AllowedMime) == 0:
@@ -191,12 +211,21 @@ func validate(name string, ns Namespace) (domain.MimeSet, []domain.VariantName, 
 	}
 
 	variants := make([]domain.VariantName, 0, len(ns.Variants))
+	seen := make(map[string]struct{}, len(ns.Variants))
 
 	for _, variant := range ns.Variants {
 		parsed, err := domain.NewVariantName(variant.Name)
 		if err != nil {
 			return domain.MimeSet{}, nil, fail("variant %q: %v", variant.Name, err)
 		}
+
+		if _, duplicate := seen[parsed.String()]; duplicate {
+			return domain.MimeSet{}, nil, fail(
+				"variant %q is declared twice, the second one would collide on insert",
+				parsed.String())
+		}
+
+		seen[parsed.String()] = struct{}{}
 
 		if parsed.IsOriginal() {
 			return domain.MimeSet{}, nil, fail("%q is reserved and is written for every file", parsed.String())
@@ -218,6 +247,22 @@ func validate(name string, ns Namespace) (domain.MimeSet, []domain.VariantName, 
 		}
 
 		variants = append(variants, parsed)
+	}
+
+	for _, raw := range ns.SignedVariants {
+		parsed, err := domain.NewVariantName(raw)
+		if err != nil {
+			return domain.MimeSet{}, nil, fail("signed_variants %q: %v", raw, err)
+		}
+
+		if parsed.IsOriginal() {
+			continue
+		}
+
+		if _, declared := seen[parsed.String()]; !declared {
+			return domain.MimeSet{}, nil, fail(
+				"signed_variants names %q, which this namespace does not produce", parsed.String())
+		}
 	}
 
 	return mime, variants, nil
@@ -321,8 +366,9 @@ func (r *Registry) AccessPolicy(namespace domain.Namespace) (usecase.AccessPolic
 	}
 
 	return usecase.AccessPolicy{
-		Signed:     found.Access == AccessSigned,
-		MaxLinkTTL: found.LinkMaxTTL,
+		Signed:         found.Access == AccessSigned,
+		SignedVariants: r.signed[namespace.String()],
+		MaxLinkTTL:     found.LinkMaxTTL,
 	}, nil
 }
 
@@ -333,9 +379,10 @@ func (r *Registry) ServingPolicy(namespace domain.Namespace) (usecase.ServingPol
 	}
 
 	return usecase.ServingPolicy{
-		Signed:       found.Access == AccessSigned,
-		CacheControl: found.CacheControl,
-		Disposition:  found.Disposition,
-		AcceptRanges: found.AcceptRanges,
+		Signed:         found.Access == AccessSigned,
+		SignedVariants: r.signed[namespace.String()],
+		CacheControl:   found.CacheControl,
+		Disposition:    found.Disposition,
+		AcceptRanges:   found.AcceptRanges,
 	}, nil
 }

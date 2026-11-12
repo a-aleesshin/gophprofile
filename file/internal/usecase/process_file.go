@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 )
@@ -139,6 +140,8 @@ func NewProcessFileHandler(
 	}
 }
 
+const compensationTimeout = 10 * time.Second
+
 func (h *ProcessFileHandler) Handle(
 	ctx context.Context,
 	cmd ProcessFileCommand,
@@ -222,7 +225,7 @@ func (h *ProcessFileHandler) Handle(
 			return ProcessFileResult{}, err
 		}
 
-		_ = h.objects.Delete(ctx, cmd.StagingKey)
+		compensate(ctx, h.objects, cmd.StagingKey)
 
 		return ProcessFileResult{Status: file.Status(), Reason: content.Reason}, nil
 	}
@@ -303,17 +306,35 @@ func (h *ProcessFileHandler) Handle(
 		})
 	})
 
-	if errors.Is(err, ErrStaleVersion) {
-		_ = h.objects.Delete(ctx, written...)
-
-		return ProcessFileResult{Status: domain.FileStatusDeleting}, nil
-	}
-
 	if err != nil {
+		current, reloadErr := h.files.ByID(ctx, cmd.FileID)
+
+		if reloadErr == nil && current.Status().Equal(domain.FileStatusReady) {
+			return ProcessFileResult{Status: current.Status()}, nil
+		}
+
+		compensate(ctx, h.objects, written...)
+
+		if errors.Is(err, ErrStaleVersion) {
+			return ProcessFileResult{Status: domain.FileStatusDeleting}, nil
+		}
+
 		return ProcessFileResult{}, err
 	}
 
-	_ = h.objects.Delete(ctx, cmd.StagingKey)
+	compensate(ctx, h.objects, cmd.StagingKey)
 
 	return ProcessFileResult{Status: file.Status()}, nil
+}
+
+func compensate(ctx context.Context, objects objectReadWriter, locations ...domain.Location) {
+	if len(locations) == 0 {
+		return
+	}
+
+	detached, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), compensationTimeout)
+	defer cancel()
+
+	_ = objects.Delete(detached, locations...)
 }

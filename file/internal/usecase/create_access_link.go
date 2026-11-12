@@ -12,8 +12,9 @@ import (
 var ErrFileNotServable = errors.New("file is not servable")
 
 type AccessPolicy struct {
-	Signed     bool
-	MaxLinkTTL time.Duration
+	Signed         bool
+	SignedVariants []domain.VariantName
+	MaxLinkTTL     time.Duration
 }
 
 type LinkTargetView struct {
@@ -79,6 +80,16 @@ func NewCreateAccessLinkHandler(
 	}
 }
 
+func signedVariant(signed []domain.VariantName, variant domain.VariantName) bool {
+	for _, name := range signed {
+		if name.Equal(variant) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (h *CreateAccessLinkHandler) Handle(
 	ctx context.Context,
 	cmd CreateAccessLinkCommand,
@@ -110,7 +121,7 @@ func (h *CreateAccessLinkHandler) Handle(
 
 	var expiresAt time.Time
 
-	if policy.Signed {
+	if policy.Signed || signedVariant(policy.SignedVariants, cmd.Variant) {
 		ttl := policy.MaxLinkTTL
 		if cmd.TTL > 0 && cmd.TTL < ttl {
 			ttl = cmd.TTL
