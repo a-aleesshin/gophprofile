@@ -6,6 +6,22 @@ vars:
   GO: '{{.GO | default "go"}}'
 
 tasks:
+  env:
+    desc: Create .env from the example with freshly generated secrets
+    silent: true
+    cmds:
+      - |
+        if [ -f .env ]; then
+          echo ".env already exists, leaving it alone"
+          exit 0
+        fi
+
+        sed -e "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" \
+            -e "s|^GRPC_TOKEN=.*|GRPC_TOKEN=$(openssl rand -hex 32)|" \
+            .env.example > .env
+
+        echo ".env created, LINK_SECRET and GRPC_TOKEN generated"
+
   build:
     desc: Build every binary of the file service
     cmds:
