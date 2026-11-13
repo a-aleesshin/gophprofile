@@ -169,5 +169,6 @@ func TestBuildServerRunsWithoutPprof(t *testing.T) {
 	require.Error(t, err, "nothing may be listening where pprof would have been")
 
 	cancel()
-	<-done
+
+	assert.ErrorIs(t, <-done, context.Canceled)
 }

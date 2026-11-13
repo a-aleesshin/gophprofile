@@ -37,7 +37,7 @@ func (r *racingProfiles) ByUserID(
 		return profile, nil
 	}
 
-	r.once.Do(func() { _ = r.Profiles.Create(ctx, &r.winner) })
+	r.once.Do(func() { _ = r.Create(ctx, &r.winner) })
 
 	return domain.Profile{}, err
 }

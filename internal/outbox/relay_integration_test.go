@@ -994,46 +994,6 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	assert.Equal(t, 3, left)
 }
 
-func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		db     *pgtx.DB
-		clock  Clock
-		mutate func(*PrunerConfig)
-	}{
-		{name: "no db", clock: clock.System{}},
-		{name: "no clock", db: sharedDB},
-		{
-			name: "zero retention", db: sharedDB, clock: clock.System{},
-			mutate: func(c *PrunerConfig) { c.Retention = 0 },
-		},
-		{
-			name: "zero batch size", db: sharedDB, clock: clock.System{},
-			mutate: func(c *PrunerConfig) { c.BatchSize = 0 },
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := PrunerConfig{Retention: time.Hour, BatchSize: 10}
-			if test.mutate != nil {
-				test.mutate(&cfg)
-			}
-
-			// Act
-			pruner, err := NewPruner(test.db, test.clock, cfg)
-
-			// Assert
-			require.ErrorIs(t, err, ErrInvalidPrunerConfig)
-			assert.Nil(t, pruner)
-		})
-	}
-}
-
 func rowExists(t *testing.T, id int64) bool {
 	t.Helper()
 

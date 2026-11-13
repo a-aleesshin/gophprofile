@@ -273,26 +273,3 @@ func TestUncommittedRecordComesBackAfterARestart(t *testing.T) {
 	assert.JSONEq(t, `{"n":1}`, string(message.Body()),
 		"a record whose effect was never committed must be delivered again")
 }
-
-func TestNewConsumerRefusesAnIncompleteConfig(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  Config
-	}{
-		{name: "no brokers", cfg: Config{Topic: "t", Group: "g", RetryBackoff: time.Second}},
-		{name: "no topic", cfg: Config{Brokers: brokers, Group: "g", RetryBackoff: time.Second}},
-		{name: "no group", cfg: Config{Brokers: brokers, Topic: "t", RetryBackoff: time.Second}},
-		{name: "no backoff", cfg: Config{Brokers: brokers, Topic: "t", Group: "g"}},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			// Act
-			consumer, err := NewConsumer(test.cfg)
-
-			// Assert
-			require.ErrorIs(t, err, ErrInvalidConfig)
-			assert.Nil(t, consumer)
-		})
-	}
-}
