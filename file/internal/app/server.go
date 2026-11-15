@@ -26,6 +26,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/grpcserver"
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
+	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/internal/worker"
@@ -51,6 +52,15 @@ func BuildServer(
 
 		return nil, nil, err
 	}
+
+	flushTraces, err := observability.StartTracing(ctx, cfg.Tracing,
+		observability.Identity{Service: "file", Component: "server"})
+	if err != nil {
+		return fail(fmt.Errorf("start tracing: %w", err))
+	}
+
+	closers = append(closers,
+		observability.CloseTracing(flushTraces, cfg.Tracing.Timeout, logger))
 
 	pool, err := pgtx.Connect(ctx, cfg.Postgres)
 	if err != nil {

@@ -10,6 +10,9 @@ x-file-env: &file-env
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
   S3_BUCKET: gophprofile
   POLICIES_PATH: configs/policies.yaml
+  TRACING_ENABLED: ${TRACING_ENABLED:-true}
+  TRACING_ENDPOINT: ${TRACING_ENDPOINT:-jaeger:4317}
+  TRACING_SAMPLE_RATIO: ${TRACING_SAMPLE_RATIO:-1}
 
 x-profile-env: &profile-env
   LOG_LEVEL: ${LOG_LEVEL:-info}
@@ -25,6 +28,9 @@ x-profile-env: &profile-env
   HEALTH_ADDR: ":8081"
   METRICS_ADDR: ":9100"
   PPROF_ADDR: ${PPROF_ADDR:-}
+  TRACING_ENABLED: ${TRACING_ENABLED:-true}
+  TRACING_ENDPOINT: ${TRACING_ENDPOINT:-jaeger:4317}
+  TRACING_SAMPLE_RATIO: ${TRACING_SAMPLE_RATIO:-1}
 
 services:
   file-db:
@@ -52,6 +58,18 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U profile -d profile"]
       interval: 3s
+      timeout: 3s
+      retries: 20
+
+  jaeger:
+    image: jaegertracing/jaeger:2.12.0
+    restart: unless-stopped
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_OTLP_PORT:-4317}:4317"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:16686/"]
+      interval: 5s
       timeout: 3s
       retries: 20
 

@@ -9,6 +9,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/logging"
+	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/filegrpc"
@@ -20,6 +21,7 @@ import (
 
 type Common struct {
 	Log      logging.Config
+	Tracing  observability.TracingConfig
 	Postgres pgtx.Config
 	URLs     urls.Config
 	Policy   policy.Config
@@ -85,6 +87,7 @@ func load(sections ...func() error) error {
 func loadCommon(dst *Common) error {
 	return load(
 		func() error { return config.LoadSection(&dst.Log, "LOG_") },
+		func() error { return config.LoadSection(&dst.Tracing, "TRACING_") },
 		func() error { return config.LoadSection(&dst.Postgres, "POSTGRES_") },
 		func() error { return config.LoadSection(&dst.URLs, "CONTENT_") },
 		func() error { return config.LoadSection(&dst.Policy, "POLICY_") },
