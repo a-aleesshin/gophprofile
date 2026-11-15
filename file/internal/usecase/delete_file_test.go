@@ -284,6 +284,64 @@ func TestDeleteFile_Errors(t *testing.T) {
 	})
 }
 
+func TestDeleteFile_DeletesAfterLosingToAWriteThatWasNotADelete(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: the winner moved the file on without deleting it, which is what
+	// processing or the reaper does. Reporting its status as our own result told
+	// profile the file was gone while it was still there.
+	file, locations := testReadyFileWithVariants(t)
+
+	bumped, err := domain.RestoreFile(domain.RestoreFileParams{
+		ID:        file.ID(),
+		Version:   9,
+		Namespace: file.Namespace(),
+		OwnerRef:  file.OwnerRef(),
+		Location:  file.Location(),
+		Status:    domain.FileStatusReady,
+		CreatedAt: testNow,
+		UpdatedAt: testNow,
+	})
+	require.NoError(t, err)
+
+	h := newDeleteFileHarness(t, []domain.File{file, bumped}, locations)
+	h.files.firstSaveErr = ErrStaleVersion
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: file.OwnerRef(),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Status.Equal(domain.FileStatusDeleting),
+		"the retry reads the file again and deletes it for real")
+	assert.Equal(t, 2, h.files.calls)
+	require.Len(t, h.enqueuer.commands, 1,
+		"without the enqueue the objects stay in storage forever")
+}
+
+func TestDeleteFile_GivesUpWhenItKeepsLosing(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file, locations := testReadyFileWithVariants(t)
+
+	h := newDeleteFileHarness(t, []domain.File{file}, locations)
+	h.files.firstSaveErr = ErrStaleVersion
+	h.files.saveErr = ErrStaleVersion
+
+	// Act
+	_, err := h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: file.OwnerRef(),
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"a caller told the delete succeeded would stop asking, and nothing deleted it")
+	assert.Equal(t, deleteFileAttempts, h.files.calls)
+}
+
 func TestDeleteFile_RefusesAFileOfAnotherOwner(t *testing.T) {
 	t.Parallel()
 

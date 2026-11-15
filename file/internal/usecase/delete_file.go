@@ -23,6 +23,8 @@ type deleteObjectsEnqueuer interface {
 
 var ErrOwnerMismatch = errors.New("the file belongs to another owner")
 
+const deleteFileAttempts = 3
+
 type DeleteFileCommand struct {
 	FileID   domain.FileID
 	OwnerRef domain.OwnerRef
@@ -67,54 +69,54 @@ func (h *DeleteFileHandler) Handle(
 		return DeleteFileResult{}, fmt.Errorf("%w: owner is required", ErrInvalidCommand)
 	}
 
-	file, err := h.files.ByID(ctx, cmd.FileID)
-	if err != nil {
-		return DeleteFileResult{}, err
-	}
+	for range deleteFileAttempts {
+		file, err := h.files.ByID(ctx, cmd.FileID)
+		if err != nil {
+			return DeleteFileResult{}, err
+		}
 
-	if !file.IsOwnedBy(cmd.OwnerRef) {
-		return DeleteFileResult{}, fmt.Errorf("%w: file %s",
-			ErrOwnerMismatch, cmd.FileID.String())
-	}
+		if !file.IsOwnedBy(cmd.OwnerRef) {
+			return DeleteFileResult{}, fmt.Errorf("%w: file %s",
+				ErrOwnerMismatch, cmd.FileID.String())
+		}
 
-	if file.IsDeleted() {
+		if file.IsDeleted() {
+			return DeleteFileResult{Status: file.Status()}, nil
+		}
+
+		locations, err := h.variants.LocationsByFileID(ctx, file.ID())
+		if err != nil {
+			return DeleteFileResult{}, err
+		}
+
+		locations = append(locations, file.Location())
+
+		if err := file.MarkForDeletion(h.clock.Now()); err != nil {
+			return DeleteFileResult{}, err
+		}
+
+		err = h.tx.InTx(ctx, func(ctx context.Context) error {
+			if err := h.files.Save(ctx, &file); err != nil {
+				return err
+			}
+
+			return h.enqueuer.EnqueueDeleteObjects(ctx, DeleteObjectsCommand{
+				FileID:    file.ID(),
+				Locations: locations,
+			})
+		})
+
+		if errors.Is(err, ErrStaleVersion) {
+			continue
+		}
+
+		if err != nil {
+			return DeleteFileResult{}, err
+		}
+
 		return DeleteFileResult{Status: file.Status()}, nil
 	}
 
-	locations, err := h.variants.LocationsByFileID(ctx, file.ID())
-	if err != nil {
-		return DeleteFileResult{}, err
-	}
-
-	locations = append(locations, file.Location())
-
-	if err := file.MarkForDeletion(h.clock.Now()); err != nil {
-		return DeleteFileResult{}, err
-	}
-
-	err = h.tx.InTx(ctx, func(ctx context.Context) error {
-		if err := h.files.Save(ctx, &file); err != nil {
-			return err
-		}
-
-		return h.enqueuer.EnqueueDeleteObjects(ctx, DeleteObjectsCommand{
-			FileID:    file.ID(),
-			Locations: locations,
-		})
-	})
-
-	if errors.Is(err, ErrStaleVersion) {
-		current, reloadErr := h.files.ByID(ctx, cmd.FileID)
-		if reloadErr != nil {
-			return DeleteFileResult{}, reloadErr
-		}
-
-		return DeleteFileResult{Status: current.Status()}, nil
-	}
-
-	if err != nil {
-		return DeleteFileResult{}, err
-	}
-
-	return DeleteFileResult{Status: file.Status()}, nil
+	return DeleteFileResult{}, fmt.Errorf("%w: file %s",
+		ErrStaleVersion, cmd.FileID.String())
 }
