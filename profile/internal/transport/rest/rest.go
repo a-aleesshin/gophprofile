@@ -81,6 +81,7 @@ type Config struct {
 }
 
 type identityManager interface {
+	DemoLoginEnabled() bool
 	Login(secret string) error
 	Issue(user domain.UserID) (string, time.Time, error)
 	Verify(token string) (domain.UserID, error)
@@ -159,12 +160,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	public := map[string]http.HandlerFunc{
-		"POST /api/v1/sessions":                    h.openSession,
 		"GET /api/v1/avatars/{avatar_id}":          h.resolveAvatar,
 		"GET /api/v1/avatars/{avatar_id}/metadata": h.getAvatar,
 		"GET /api/v1/emails/{email_hash}/avatar":   h.resolveByEmail,
 		"GET /api/v1/users/{user_id}/avatars":      h.listAvatars,
 		"GET /api/v1/users/{user_id}/avatar":       h.resolveCurrentAvatar,
+	}
+
+	if h.identity.DemoLoginEnabled() {
+		public["POST /api/v1/sessions"] = h.openSession
 	}
 
 	for pattern, handler := range public {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -40,9 +41,19 @@ type RelayConfig struct {
 }
 
 type RelayStats struct {
-	Published int
-	Failed    int
-	Parked    int
+	Published  int
+	Failed     int
+	Parked     int
+	ParkedRows []ParkedMessage
+}
+
+type ParkedMessage struct {
+	ID           int64
+	Destination  string
+	PartitionKey string
+	Type         string
+	Attempts     int
+	Err          error
 }
 
 type Relay struct {
@@ -50,6 +61,7 @@ type Relay struct {
 	transport string
 	sender    Sender
 	clock     Clock
+	logger    *slog.Logger
 	cfg       RelayConfig
 }
 
@@ -58,11 +70,14 @@ func NewRelay(
 	transport string,
 	sender Sender,
 	clock Clock,
+	logger *slog.Logger,
 	cfg RelayConfig,
 ) (*Relay, error) {
 	switch {
 	case db == nil:
 		return nil, fmt.Errorf("%w: db is required", ErrInvalidRelayConfig)
+	case logger == nil:
+		return nil, fmt.Errorf("%w: logger is required", ErrInvalidRelayConfig)
 	case transport != TransportRabbit && transport != TransportKafka:
 		return nil, fmt.Errorf("%w: unknown transport %q", ErrInvalidRelayConfig, transport)
 	case sender == nil:
@@ -86,5 +101,12 @@ func NewRelay(
 		return nil, fmt.Errorf("%w: max age must be positive", ErrInvalidRelayConfig)
 	}
 
-	return &Relay{db: db, transport: transport, sender: sender, clock: clock, cfg: cfg}, nil
+	return &Relay{
+		db:        db,
+		transport: transport,
+		sender:    sender,
+		clock:     clock,
+		logger:    logger,
+		cfg:       cfg,
+	}, nil
 }

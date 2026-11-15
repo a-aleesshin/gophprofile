@@ -205,6 +205,7 @@ func serverConfig(t *testing.T) config.Server {
 		},
 		Identity: identity.Config{
 			Secret:      testIdentitySecret,
+			DemoLogin:   true,
 			LoginSecret: testIdentityLogin,
 			TTL:         time.Hour,
 		},

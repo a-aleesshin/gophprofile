@@ -84,7 +84,7 @@ func BuildWorker(
 
 	closers = append(closers, producer.Close)
 
-	relay, err := outbox.NewRelay(db, outbox.TransportKafka, producer, now, cfg.Relay)
+	relay, err := outbox.NewRelay(db, outbox.TransportKafka, producer, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build kafka relay: %w", err))
 	}

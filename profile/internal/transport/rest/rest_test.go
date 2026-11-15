@@ -733,6 +733,22 @@ func TestPublicReadsRefuseAUserTheyCannotParse(t *testing.T) {
 	assert.True(t, h.get.cmd.AvatarID.IsZero(), "the handler must not run at all")
 }
 
+func TestSessionRouteIsAbsentWhenTheDemoDoorIsClosed(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarnessWithIdentity(t, stubIdentity{demoClosed: true})
+
+	// Act
+	response, payload := h.do(t, http.MethodPost, "/api/v1/sessions",
+		`{"user_id":"user-1","secret":"`+testSecret+`"}`, nil)
+
+	// Assert
+	assert.Equal(t, http.StatusNotFound, response.StatusCode,
+		"a closed door is not a 401 on a route that exists, it is no route at all")
+	assert.NotContains(t, string(payload), "token")
+}
+
 func TestSessionRefusesTheWrongSecret(t *testing.T) {
 	t.Parallel()
 

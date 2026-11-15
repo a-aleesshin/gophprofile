@@ -187,6 +187,12 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
+	return newHarnessWithIdentity(t, stubIdentity{})
+}
+
+func newHarnessWithIdentity(t *testing.T, who identityManager) *harness {
+	t.Helper()
+
 	h := &harness{
 		start:    &stubStartUpload{},
 		complete: &stubCompleteUpload{},
@@ -209,7 +215,7 @@ func newHarness(t *testing.T) *harness {
 		ResolveByEmail:       h.byEmail,
 		DeleteAvatar:         h.remove,
 		BindEmail:            h.bind,
-	}, stubIdentity{}, Config{Timeout: time.Second},
+	}, who, Config{Timeout: time.Second},
 		slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
@@ -264,7 +270,9 @@ func (h *harness) asUser(t *testing.T, method, path, body string) (*http.Respons
 
 // stubIdentity treats the token as the user id it stands for, so a test says
 // who it is without minting a signature. The real signer has its own tests.
-type stubIdentity struct{}
+type stubIdentity struct{ demoClosed bool }
+
+func (s stubIdentity) DemoLoginEnabled() bool { return !s.demoClosed }
 
 func (stubIdentity) Login(secret string) error {
 	if secret != testSecret {

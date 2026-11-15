@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -151,6 +152,10 @@ func readRow(t *testing.T, id int64) storedRow {
 	return row
 }
 
+func testRelayLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
+
 func testRelay(
 	t *testing.T,
 	transport string,
@@ -174,7 +179,7 @@ func testRelay(
 		mutate(&cfg)
 	}
 
-	relay, err := NewRelay(sharedDB, transport, sender, clock.Fixed{At: now}, cfg)
+	relay, err := NewRelay(sharedDB, transport, sender, clock.Fixed{At: now}, testRelayLogger(), cfg)
 	require.NoError(t, err)
 
 	return relay
@@ -1220,6 +1225,59 @@ func TestRelayParksAMessageTheBrokerWillNeverAccept(t *testing.T) {
 	assert.True(t, parked, "a message that can never be sent must stop being retried")
 	assert.Equal(t, 1, attempts)
 	assert.Contains(t, reason, "larger than the broker accepts")
+}
+
+func TestRelayNamesTheRowItParked(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	id := insertPending(t, TransportKafka, "file-7", 2, now)
+
+	relay := testRelay(t, TransportKafka, &unpublishableSender{}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Len(t, stats.ParkedRows, 1,
+		"a counter cannot tell anyone which row stopped, so the row must come back")
+
+	parked := stats.ParkedRows[0]
+	assert.Equal(t, id, parked.ID)
+	assert.Equal(t, "file-7", parked.PartitionKey)
+	assert.Equal(t, "test.destination", parked.Destination)
+	assert.Equal(t, "TestMessage", parked.Type)
+	assert.Equal(t, 3, parked.Attempts,
+		"the report counts the attempt that gave up, as the stored row does")
+	assert.ErrorContains(t, parked.Err, "larger than the broker accepts")
+
+	stored, attempts, _ := parkedRow(t, id)
+	assert.True(t, stored)
+	assert.Equal(t, parked.Attempts, attempts,
+		"the number in the log must be the number in the table")
+}
+
+func TestRelayReportsNoParkedRowWhenItParksNothing(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	insertPending(t, TransportKafka, "file-8", 0, now.Add(-time.Minute))
+
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failOn: 1, err: errors.New("broker is down")}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Zero(t, stats.Parked)
+	assert.Empty(t, stats.ParkedRows,
+		"a failure that will be retried is not an incident to report")
 }
 
 func TestRelayLeavesAParkedMessageAlone(t *testing.T) {

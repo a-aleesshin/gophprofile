@@ -59,15 +59,27 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 		return RelayStats{}, sendErr
 	}
 
-	parked := 0
+	var parked []ParkedMessage
 
 	for _, item := range failures {
 		if r.giveUpOn(item, now) {
-			parked++
+			parked = append(parked, ParkedMessage{
+				ID:           item.message.ID,
+				Destination:  item.message.Destination,
+				PartitionKey: item.message.PartitionKey,
+				Type:         item.message.Type,
+				Attempts:     item.message.Attempts + 1,
+				Err:          item.err,
+			})
 		}
 	}
 
-	return RelayStats{Published: len(published), Failed: len(failures), Parked: parked}, nil
+	return RelayStats{
+		Published:  len(published),
+		Failed:     len(failures),
+		Parked:     len(parked),
+		ParkedRows: parked,
+	}, nil
 }
 
 func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
@@ -318,6 +330,17 @@ func (r *Relay) Run(ctx context.Context) error {
 		stats, err := r.Tick(ctx)
 
 		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed, stats.Parked)
+
+		for _, message := range stats.ParkedRows {
+			r.logger.Warn("parked an outbox row",
+				"transport", r.transport,
+				"outbox_id", message.ID,
+				"destination", message.Destination,
+				"partition_key", message.PartitionKey,
+				"message_type", message.Type,
+				"attempts", message.Attempts,
+				"error", message.Err)
+		}
 
 		if err != nil {
 			return err

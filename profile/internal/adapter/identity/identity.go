@@ -21,12 +21,14 @@ var (
 	ErrBadToken      = errors.New("identity token does not verify")
 	ErrExpired       = errors.New("identity token has expired")
 	ErrBadSecret     = errors.New("wrong login secret")
+	ErrLoginDisabled = errors.New("the demo login is not enabled")
 )
 
 type Config struct {
 	Secret         string        `env:"SECRET,required,notEmpty"`
 	PreviousSecret string        `env:"PREVIOUS_SECRET"`
-	LoginSecret    string        `env:"LOGIN_SECRET,required,notEmpty"`
+	LoginSecret    string        `env:"LOGIN_SECRET"`
+	DemoLogin      bool          `env:"DEMO_LOGIN" envDefault:"false"`
 	TTL            time.Duration `env:"TTL" envDefault:"1h"`
 }
 
@@ -35,11 +37,12 @@ type Clock interface {
 }
 
 type Signer struct {
-	signing  []byte
-	accepted [][]byte
-	login    []byte
-	ttl      time.Duration
-	clock    Clock
+	signing   []byte
+	accepted  [][]byte
+	login     []byte
+	demoLogin bool
+	ttl       time.Duration
+	clock     Clock
 }
 
 func New(cfg Config, clock Clock) (*Signer, error) {
@@ -52,10 +55,14 @@ func New(cfg Config, clock Clock) (*Signer, error) {
 	case cfg.PreviousSecret != "" && len(cfg.PreviousSecret) < minSecretLength:
 		return nil, fmt.Errorf("%w: previous secret must be at least %d bytes",
 			ErrInvalidConfig, minSecretLength)
-	case len(cfg.LoginSecret) < minSecretLength:
+	case cfg.DemoLogin && len(cfg.LoginSecret) < minSecretLength:
 		return nil, fmt.Errorf("%w: login secret must be at least %d bytes",
 			ErrInvalidConfig, minSecretLength)
-	case cfg.LoginSecret == cfg.Secret:
+	case !cfg.DemoLogin && cfg.LoginSecret != "":
+		return nil, fmt.Errorf(
+			"%w: a login secret with the demo door closed is a secret nobody can use",
+			ErrInvalidConfig)
+	case cfg.DemoLogin && cfg.LoginSecret == cfg.Secret:
 		return nil, fmt.Errorf(
 			"%w: the login secret reaches the browser and the signing secret must not",
 			ErrInvalidConfig)
@@ -71,15 +78,22 @@ func New(cfg Config, clock Clock) (*Signer, error) {
 	}
 
 	return &Signer{
-		signing:  signing,
-		accepted: accepted,
-		login:    []byte(cfg.LoginSecret),
-		ttl:      cfg.TTL,
-		clock:    clock,
+		signing:   signing,
+		accepted:  accepted,
+		login:     []byte(cfg.LoginSecret),
+		demoLogin: cfg.DemoLogin,
+		ttl:       cfg.TTL,
+		clock:     clock,
 	}, nil
 }
 
+func (s *Signer) DemoLoginEnabled() bool { return s.demoLogin }
+
 func (s *Signer) Login(secret string) error {
+	if !s.demoLogin {
+		return ErrLoginDisabled
+	}
+
 	if subtle.ConstantTimeCompare([]byte(secret), s.login) != 1 {
 		return ErrBadSecret
 	}

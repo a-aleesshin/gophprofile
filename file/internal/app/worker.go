@@ -129,12 +129,13 @@ func BuildWorker(
 	closers = append(closers, kafkaProducer.Close)
 
 	rabbitRelay, err := outbox.NewRelay(
-		db, outbox.TransportRabbit, rabbitPublisher, now, cfg.Relay)
+		db, outbox.TransportRabbit, rabbitPublisher, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build rabbit relay: %w", err))
 	}
 
-	kafkaRelay, err := outbox.NewRelay(db, outbox.TransportKafka, kafkaProducer, now, cfg.Relay)
+	kafkaRelay, err := outbox.NewRelay(
+		db, outbox.TransportKafka, kafkaProducer, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build kafka relay: %w", err))
 	}

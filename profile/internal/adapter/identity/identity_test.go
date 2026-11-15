@@ -23,6 +23,7 @@ var testNow = time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)
 func testConfig() Config {
 	return Config{
 		Secret:      testSecret,
+		DemoLogin:   true,
 		LoginSecret: testLogin,
 		TTL:         time.Hour,
 	}
@@ -79,6 +80,7 @@ func TestVerifyRefusesWhatItCannotTrust(t *testing.T) {
 
 	other := testSigner(t, Config{
 		Secret:      testPrevious,
+		DemoLogin:   true,
 		LoginSecret: testLogin,
 		TTL:         time.Hour,
 	}, testNow)
@@ -138,6 +140,7 @@ func TestVerifyStillAcceptsThePreviousSecret(t *testing.T) {
 	// Arrange
 	old := testSigner(t, Config{
 		Secret:      testPrevious,
+		DemoLogin:   true,
 		LoginSecret: testLogin,
 		TTL:         time.Hour,
 	}, testNow)
@@ -148,6 +151,7 @@ func TestVerifyStillAcceptsThePreviousSecret(t *testing.T) {
 	rotated := testSigner(t, Config{
 		Secret:         testSecret,
 		PreviousSecret: testPrevious,
+		DemoLogin:      true,
 		LoginSecret:    testLogin,
 		TTL:            time.Hour,
 	}, testNow)
@@ -178,6 +182,32 @@ func TestLoginChecksTheSharedSecret(t *testing.T) {
 	require.ErrorIs(t, signer.Login(testLogin+"x"), ErrBadSecret)
 }
 
+func TestDemoLoginIsClosedByDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg := testConfig()
+	cfg.DemoLogin = false
+	cfg.LoginSecret = ""
+
+	signer := testSigner(t, cfg, testNow)
+
+	assert.False(t, signer.DemoLoginEnabled(),
+		"the demo door must stay shut unless someone opens it on purpose")
+	require.ErrorIs(t, signer.Login(testLogin), ErrLoginDisabled)
+	require.ErrorIs(t, signer.Login(""), ErrLoginDisabled,
+		"a closed door answers the same whatever is offered to it")
+
+	user := testUser(t, "user-1")
+
+	token, _, err := signer.Issue(user)
+	require.NoError(t, err,
+		"closing the demo door must not break the tokens the service already signs")
+
+	got, err := signer.Verify(token)
+	require.NoError(t, err)
+	assert.True(t, got.Equal(user))
+}
+
 func TestNewRefusesABrokenConfig(t *testing.T) {
 	t.Parallel()
 
@@ -196,8 +226,16 @@ func TestNewRefusesABrokenConfig(t *testing.T) {
 			mutate: func(c *Config) { c.PreviousSecret = "too-short" },
 		},
 		{
-			name:   "short login secret",
+			name:   "short login secret with the demo door open",
 			mutate: func(c *Config) { c.LoginSecret = "too-short" },
+		},
+		{
+			name:   "no login secret with the demo door open",
+			mutate: func(c *Config) { c.LoginSecret = "" },
+		},
+		{
+			name:   "login secret with the demo door closed",
+			mutate: func(c *Config) { c.DemoLogin = false },
 		},
 		{
 			name:   "login secret equals the signing secret",
