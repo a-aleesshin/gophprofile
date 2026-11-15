@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package gophprofile.file.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/a-aleesshin/gophprofile/file/gen/file/v1;filev1";
+
+service FileService {
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  rpc GetFile(GetFileRequest) returns (GetFileResponse);
+  rpc GetFiles(GetFilesRequest) returns (GetFilesResponse);
+  rpc CreateAccessLink(CreateAccessLinkRequest) returns (CreateAccessLinkResponse);
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+enum FileStatus {
+  FILE_STATUS_UNSPECIFIED = 0;
+  FILE_STATUS_RECEIVED = 1;
+  FILE_STATUS_PROCESSING = 2;
+  FILE_STATUS_READY = 3;
+  FILE_STATUS_REJECTED = 4;
+  FILE_STATUS_DELETING = 5;
+  FILE_STATUS_DELETED = 6;
+}
+
+message CreateUploadRequest {
+  string namespace = 1;
+  string owner_ref = 2;
+  string original_name = 3;
+  string declared_mime = 4;
+  int64 max_size_bytes = 5;
+  string idempotency_key = 6;
+}
+
+message CreateUploadResponse {
+  string upload_id = 1;
+  string url = 2;
+  map<string, string> fields = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message CompleteUploadRequest {
+  string upload_id = 1;
+}
+
+message CompleteUploadResponse {
+  string file_id = 1;
+  FileStatus status = 2;
+}
+
+message GetFileRequest {
+  string file_id = 1;
+}
+
+message GetFileResponse {
+  File file = 1;
+}
+
+message DeleteFileRequest {
+  string file_id = 1;
+}
+
+message DeleteFileResponse {
+  FileStatus status = 1;
+}
+
+message GetFilesRequest {
+  repeated string file_ids = 1;
+}
+
+message GetFilesResponse {
+  repeated File files = 1;
+}
+
+message CreateAccessLinkRequest {
+  string file_id = 1;
+  string variant = 2;
+  int32 ttl_seconds = 3;
+}
+
+message CreateAccessLinkResponse {
+  string url = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message Variant {
+  string name = 1;
+  string ext = 2;
+  string mime_type = 3;
+  int32 width = 4;
+  int32 height = 5;
+  int64 size_bytes = 6;
+  string etag = 7;
+}
+
+message File {
+  string id = 1;
+  string namespace = 2;
+  string owner_ref = 3;
+  string mime_type = 4;
+  int64 size_bytes = 5;
+  int32 width = 6;
+  int32 height = 7;
+  FileStatus status = 8;
+  repeated Variant variants = 9;
+  google.protobuf.Timestamp created_at = 10;
+  string reject_reason = 11;
+}
