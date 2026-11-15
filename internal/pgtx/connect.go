@@ -57,6 +57,7 @@ func Connect(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	poolCfg.MaxConnLifetime = cfg.MaxConnLifetime
 	poolCfg.MaxConnIdleTime = cfg.MaxConnIdleTime
 	poolCfg.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
+	poolCfg.ConnConfig.Tracer = newQueryTracer(poolCfg.ConnConfig)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

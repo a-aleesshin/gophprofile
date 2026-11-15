@@ -15,7 +15,10 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
-var sharedDB *DB
+var (
+	sharedDB  *DB
+	sharedDSN string
+)
 
 func TestMain(m *testing.M) {
 	ctx := context.Background()
@@ -36,6 +39,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "connection string: %v\n", err)
 		os.Exit(1)
 	}
+
+	sharedDSN = dsn
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
