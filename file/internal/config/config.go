@@ -29,6 +29,7 @@ type Common struct {
 type Jobs struct {
 	ReconcileInterval time.Duration `env:"RECONCILE_INTERVAL" envDefault:"1m"`
 	ReconcileLimit    int           `env:"RECONCILE_LIMIT" envDefault:"100"`
+	ReconcileAttempts int           `env:"RECONCILE_ATTEMPTS" envDefault:"10"`
 	ReapInterval      time.Duration `env:"REAP_INTERVAL" envDefault:"5m"`
 	ReapLimit         int           `env:"REAP_LIMIT" envDefault:"100"`
 	ReapStaleAfter    time.Duration `env:"REAP_STALE_AFTER" envDefault:"15m"`

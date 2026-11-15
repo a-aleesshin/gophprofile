@@ -226,6 +226,7 @@ func workerConfig(t *testing.T) config.Worker {
 			BacklogInterval:   200 * time.Millisecond,
 			ReconcileInterval: time.Minute,
 			ReconcileLimit:    10,
+			ReconcileAttempts: 10,
 			ReapInterval:      time.Minute,
 			ReapLimit:         10,
 			ReapStaleAfter:    15 * time.Minute,

@@ -93,7 +93,11 @@ func BuildWorker(
 		files, variants, store, processor, publisher, db, now)
 	deleteObjects := usecase.NewDeleteObjectsHandler(files, uploads, store, publisher, db, now)
 	deleteFile := usecase.NewDeleteFileHandler(files, variants, publisher, db, now)
-	reconcile := usecase.NewReconcileUploadsHandler(uploads, uploads, store, completeUpload, now)
+	reconcile, err := usecase.NewReconcileUploadsHandler(
+		uploads, uploads, store, completeUpload, now, cfg.Jobs.ReconcileAttempts)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobReconcile, err))
+	}
 	reap := usecase.NewReapStaleFilesHandler(
 		files, files, variants, publisher, publisher, db, now)
 
@@ -183,10 +187,19 @@ func BuildWorker(
 				return err
 			}
 
-			if result.Completed+result.Expired+result.Failed > 0 {
+			for _, failure := range result.Failures {
+				logger.Warn("upload reconcile attempt failed",
+					"upload_id", failure.UploadID.String(),
+					"attempts", failure.Attempts,
+					"max_attempts", cfg.Jobs.ReconcileAttempts,
+					"error", failure.Err)
+			}
+
+			if result.Completed+result.Expired+result.Aborted+result.Failed > 0 {
 				logger.Info("reconciled uploads",
 					"completed", result.Completed,
 					"expired", result.Expired,
+					"aborted", result.Aborted,
 					"failed", result.Failed)
 			}
 

@@ -75,6 +75,8 @@ func TestLoadWorker(t *testing.T) {
 	assert.Equal(t, 3, cfg.Relay.MaxConsecutiveFailures)
 
 	assert.Equal(t, time.Minute, cfg.Jobs.ReconcileInterval)
+	assert.Equal(t, 10, cfg.Jobs.ReconcileAttempts,
+		"a ticket nothing can salvage must run out of attempts instead of being retried forever")
 	assert.Equal(t, 5*time.Minute, cfg.Jobs.ReapInterval)
 	assert.Equal(t, 15*time.Minute, cfg.Jobs.ReapStaleAfter)
 

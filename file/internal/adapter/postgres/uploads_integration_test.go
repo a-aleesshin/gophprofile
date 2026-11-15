@@ -266,6 +266,54 @@ func TestUploads_SaveBumpsVersion(t *testing.T) {
 	assert.True(t, stored.FileID().Equal(fileID))
 }
 
+func TestUploads_SavePersistsAttempts(t *testing.T) {
+	t.Parallel()
+
+	repo := NewUploads(sharedDB)
+	ctx := t.Context()
+
+	upload := testUpload(t)
+	require.NoError(t, repo.Create(ctx, &upload))
+
+	stored, err := repo.ByID(ctx, upload.ID())
+	require.NoError(t, err)
+	assert.Zero(t, stored.Attempts(), "a fresh ticket starts with a clean slate")
+
+	require.NoError(t, upload.FailAttempt(time.Now()))
+	require.NoError(t, repo.Save(ctx, &upload))
+
+	stored, err = repo.ByID(ctx, upload.ID())
+	require.NoError(t, err)
+	assert.Equal(t, 1, stored.Attempts(),
+		"the counter must outlive the process, or every restart grants fresh attempts")
+	assert.True(t, stored.IsPending())
+
+	require.NoError(t, upload.FailAttempt(time.Now()))
+	require.NoError(t, upload.Abort(time.Now()))
+	require.NoError(t, repo.Save(ctx, &upload))
+
+	stored, err = repo.ByID(ctx, upload.ID())
+	require.NoError(t, err)
+	assert.Equal(t, 2, stored.Attempts())
+	assert.True(t, stored.Status().Equal(domain.UploadStatusAborted))
+}
+
+func TestSchema_AttemptsCannotGoNegative(t *testing.T) {
+	t.Parallel()
+
+	repo := NewUploads(sharedDB)
+	ctx := t.Context()
+
+	upload := testUpload(t)
+	require.NoError(t, repo.Create(ctx, &upload))
+
+	_, err := sharedDB.Pool().Exec(ctx,
+		`UPDATE uploads SET attempts = -1 WHERE id = $1`, upload.ID().UUID())
+
+	require.Error(t, err, "the domain refuses a negative counter and so must the schema")
+	assert.Contains(t, err.Error(), "uploads_attempts_check")
+}
+
 func TestUploads_StagingKeyByFileID(t *testing.T) {
 	t.Parallel()
 

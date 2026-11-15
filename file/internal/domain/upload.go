@@ -25,6 +25,7 @@ type Upload struct {
 	location       Location
 	status         UploadStatus
 	fileID         FileID
+	attempts       int
 	expiresAt      time.Time
 	createdAt      time.Time
 	updatedAt      time.Time
@@ -98,6 +99,7 @@ type RestoreUploadParams struct {
 	Location       Location
 	Status         UploadStatus
 	FileID         FileID
+	Attempts       int
 	ExpiresAt      time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -119,6 +121,8 @@ func RestoreUpload(p RestoreUploadParams) (Upload, error) {
 		return Upload{}, fmt.Errorf("%w: location is required", ErrInvalidUpload)
 	case !p.Status.IsValid():
 		return Upload{}, fmt.Errorf("%w: status %q is not valid", ErrInvalidUpload, p.Status.String())
+	case p.Attempts < 0:
+		return Upload{}, fmt.Errorf("%w: attempts must not be negative (got %d)", ErrInvalidUpload, p.Attempts)
 	case p.ExpiresAt.IsZero():
 		return Upload{}, fmt.Errorf("%w: expires at is required", ErrInvalidUpload)
 	case p.CreatedAt.IsZero():
@@ -139,6 +143,7 @@ func RestoreUpload(p RestoreUploadParams) (Upload, error) {
 		location:       p.Location,
 		status:         p.Status,
 		fileID:         p.FileID,
+		attempts:       p.Attempts,
 		expiresAt:      p.ExpiresAt.UTC(),
 		createdAt:      p.CreatedAt.UTC(),
 		updatedAt:      p.UpdatedAt.UTC(),
@@ -178,6 +183,23 @@ func (u *Upload) Abort(now time.Time) error {
 	}
 
 	u.apply(next, now)
+
+	return nil
+}
+
+func (u *Upload) FailAttempt(now time.Time) error {
+	switch {
+	case now.IsZero():
+		return fmt.Errorf("%w: now is required", ErrInvalidUpload)
+	case !u.IsPending():
+		return fmt.Errorf(
+			"%w: %q is settled, so an attempt against it cannot fail",
+			ErrForbiddenUploadTransition, u.status.String(),
+		)
+	}
+
+	u.attempts++
+	u.updatedAt = now.UTC()
 
 	return nil
 }
@@ -229,6 +251,8 @@ func (u *Upload) Location() Location { return u.location }
 func (u *Upload) Status() UploadStatus { return u.status }
 
 func (u *Upload) FileID() FileID { return u.fileID }
+
+func (u *Upload) Attempts() int { return u.attempts }
 
 func (u *Upload) ExpiresAt() time.Time { return u.expiresAt }
 
