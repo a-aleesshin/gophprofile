@@ -180,7 +180,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // cannot escape whichever handler it happens in. Logging is per route, because
 // the route pattern exists only after the mux has matched.
 func (h *Handler) wrap(next http.Handler) http.Handler {
-	return httpserver.Log(h.logger, next)
+	return httpserver.Trace(httpserver.Log(h.logger, next))
 }
 
 func (h *Handler) withTimeout(r *http.Request) (context.Context, context.CancelFunc) {

@@ -26,7 +26,7 @@ func testIdentity() Identity {
 func enabledConfig() TracingConfig {
 	return TracingConfig{
 		Enabled:     true,
-		Endpoint:    "127.0.0.1:4317",
+		Endpoint:    "127.0.0.1:1",
 		Insecure:    true,
 		SampleRatio: 1,
 		Timeout:     time.Second,
@@ -89,13 +89,10 @@ func TestStartTracingSilencesARecordingProviderWhenDisabled(t *testing.T) {
 
 func TestStartTracingDoesNotWaitForTheCollector(t *testing.T) {
 	// Arrange
-	cfg := enabledConfig()
-	cfg.Endpoint = "127.0.0.1:1"
-
 	started := time.Now()
 
 	// Act
-	flush, err := StartTracing(context.Background(), cfg, testIdentity())
+	flush, err := StartTracing(context.Background(), enabledConfig(), testIdentity())
 
 	// Assert
 	require.NoError(t, err,

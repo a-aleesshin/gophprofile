@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
 
@@ -115,4 +117,21 @@ func Log(logger *slog.Logger, next http.Handler) http.Handler {
 			slog.Int("status", status),
 			slog.Duration("took", took))
 	})
+}
+
+func Trace(next http.Handler) http.Handler {
+	return otelhttp.NewHandler(next, "http",
+		otelhttp.WithSpanNameFormatter(routeName),
+		otelhttp.WithPublicEndpointFn(alwaysPublic),
+	)
+}
+
+func alwaysPublic(*http.Request) bool { return true }
+
+func routeName(_ string, r *http.Request) string {
+	if r.Pattern == "" {
+		return r.Method
+	}
+
+	return r.Pattern
 }

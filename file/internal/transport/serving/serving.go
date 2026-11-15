@@ -75,7 +75,8 @@ func NewHandler(
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.Handle(routePattern, httpserver.Log(h.logger, http.HandlerFunc(h.serve)))
+	mux.Handle(routePattern,
+		httpserver.Trace(httpserver.Log(h.logger, http.HandlerFunc(h.serve))))
 }
 
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) {

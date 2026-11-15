@@ -7,12 +7,19 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -513,4 +520,124 @@ func TestAuthorizationLetsTheHealthWatchThrough(t *testing.T) {
 	require.NoError(t, err,
 		"Watch is a stream, and the exemption has to cover the whole health service")
 	assert.Equal(t, healthpb.HealthCheckResponse_SERVING, response.GetStatus())
+}
+
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	return recorder
+}
+
+func tracedConn(t *testing.T, logs *safeBuffer, service *echo) *grpc.ClientConn {
+	t.Helper()
+
+	addr := freeAddr(t)
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	server, err := New(testConfig(addr), logger, func(s *grpc.Server) {
+		s.RegisterService(&echoDesc, service)
+	})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+
+	go func() { done <- server.Run(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+
+		assert.ErrorIs(t, <-done, context.Canceled)
+	})
+
+	conn, err := grpc.NewClient(addr,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+
+	t.Cleanup(func() { _ = conn.Close() })
+
+	require.Eventually(t, func() bool {
+		connection, dialErr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if dialErr != nil {
+			return false
+		}
+
+		_ = connection.Close()
+
+		return true
+	}, 5*time.Second, 20*time.Millisecond)
+
+	return conn
+}
+
+func spansByKind(
+	t *testing.T,
+	recorder *tracetest.SpanRecorder,
+	kind trace.SpanKind,
+) []sdktrace.ReadOnlySpan {
+	t.Helper()
+
+	var found []sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.SpanKind() == kind {
+			found = append(found, span)
+		}
+	}
+
+	return found
+}
+
+func TestACallCarriesTheTraceToTheServer(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	var logs safeBuffer
+
+	service := &echo{}
+	conn := tracedConn(t, &logs, service)
+
+	ctx, caller := otel.Tracer("test").Start(t.Context(), "caller")
+
+	// Act
+	require.NoError(t, callEcho(bearer(ctx, testToken), conn))
+
+	caller.End()
+
+	// Assert
+	require.Eventually(t, func() bool {
+		return len(spansByKind(t, recorder, trace.SpanKindServer)) == 1
+	}, 5*time.Second, 20*time.Millisecond,
+		"the server records its span after the client has its answer")
+
+	server := spansByKind(t, recorder, trace.SpanKindServer)[0]
+	client := spansByKind(t, recorder, trace.SpanKindClient)
+
+	require.Len(t, client, 1)
+
+	assert.Equal(t, caller.SpanContext().TraceID(), client[0].SpanContext().TraceID(),
+		"the outgoing call belongs to the trace of whoever asked for it")
+	assert.Equal(t, caller.SpanContext().TraceID(), server.SpanContext().TraceID(),
+		"one request across two services has to be one trace, or there is no distributed tracing")
+	assert.Equal(t, client[0].SpanContext().SpanID(), server.Parent().SpanID(),
+		"the server span hangs off the client span, which is what draws the dependency map")
+	assert.Equal(t, strings.TrimPrefix(echoMethod, "/"), server.Name(),
+		"the semantic convention names a span rpc.service/rpc.method, without the slash")
 }
