@@ -266,6 +266,41 @@ func TestUploads_SaveBumpsVersion(t *testing.T) {
 	assert.True(t, stored.FileID().Equal(fileID))
 }
 
+func TestUploads_StagingKeyByFileID(t *testing.T) {
+	t.Parallel()
+
+	repo := NewUploads(sharedDB)
+	ctx := t.Context()
+
+	upload := testUpload(t)
+	require.NoError(t, repo.Create(ctx, &upload))
+
+	fileID, err := domain.NewFileID()
+	require.NoError(t, err)
+	insertFile(t, fileID)
+
+	// Act: before the upload is bound to the file there is nothing to answer.
+	_, err = repo.StagingKeyByFileID(ctx, fileID)
+	require.ErrorIs(t, err, domain.ErrUploadNotFound)
+
+	require.NoError(t, upload.Complete(fileID, time.Now()))
+	require.NoError(t, repo.Save(ctx, &upload))
+
+	staging, err := repo.StagingKeyByFileID(ctx, fileID)
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, staging.Equal(upload.Location()),
+		"this is the only place the staging key survives once the upload is done")
+
+	other, err := domain.NewFileID()
+	require.NoError(t, err)
+
+	_, err = repo.StagingKeyByFileID(ctx, other)
+	require.ErrorIs(t, err, domain.ErrUploadNotFound,
+		"a file nobody uploaded must not borrow somebody else's staging key")
+}
+
 func TestUploads_StaleVersionIsRejected(t *testing.T) {
 	t.Parallel()
 

@@ -266,7 +266,7 @@ func TestPublisher_SatisfiesTheUseCasePorts(t *testing.T) {
 	writer := newPublisher()
 
 	assert.NotNil(t, usecase.NewDeleteObjectsHandler(
-		nil, nil, writer, sharedDB, clock.System{}))
+		nil, nil, nil, writer, sharedDB, clock.System{}))
 	assert.NotNil(t, usecase.NewReapStaleFilesHandler(
 		nil, nil, nil, writer, writer, sharedDB, clock.System{}))
 	assert.NotNil(t, usecase.NewCompleteUploadHandler(

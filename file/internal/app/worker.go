@@ -91,7 +91,7 @@ func BuildWorker(
 		policies, uploads, files, store, publisher, db, now)
 	processFile := usecase.NewProcessFileHandler(
 		files, variants, store, processor, publisher, db, now)
-	deleteObjects := usecase.NewDeleteObjectsHandler(files, store, publisher, db, now)
+	deleteObjects := usecase.NewDeleteObjectsHandler(files, uploads, store, publisher, db, now)
 	deleteFile := usecase.NewDeleteFileHandler(files, variants, publisher, db, now)
 	reconcile := usecase.NewReconcileUploadsHandler(uploads, uploads, store, completeUpload, now)
 	reap := usecase.NewReapStaleFilesHandler(

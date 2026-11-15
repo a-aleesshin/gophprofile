@@ -142,6 +142,32 @@ func (r *Uploads) PendingExpiredBefore(
 	return uploads, nil
 }
 
+func (r *Uploads) StagingKeyByFileID(
+	ctx context.Context,
+	fileID domain.FileID,
+) (domain.Location, error) {
+	var raw string
+
+	err := r.db.Querier(ctx).QueryRow(ctx,
+		`SELECT staging_key FROM uploads WHERE file_id = $1`, fileID.UUID()).Scan(&raw)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Location{}, fmt.Errorf("%w: file %s",
+			domain.ErrUploadNotFound, fileID.String())
+	}
+
+	if err != nil {
+		return domain.Location{}, fmt.Errorf("select staging key: %w", err)
+	}
+
+	location, err := domain.RestoreLocation(raw)
+	if err != nil {
+		return domain.Location{}, err
+	}
+
+	return location, nil
+}
+
 func (r *Uploads) Save(ctx context.Context, upload *domain.Upload) error {
 	var fileID *uuid.UUID
 

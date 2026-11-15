@@ -12,6 +12,7 @@ import (
 )
 
 type deleteObjectsHarness struct {
+	uploads   *stubStagingLocator
 	handler   *DeleteObjectsHandler
 	files     *stubFileLoaderSaver
 	objects   *stubObjectDeleter
@@ -52,6 +53,25 @@ func testDeletingFile(t *testing.T, status domain.FileStatus) domain.File {
 	return file
 }
 
+type stubStagingLocator struct {
+	location domain.Location
+	err      error
+	calls    int
+}
+
+func (s *stubStagingLocator) StagingKeyByFileID(
+	_ context.Context,
+	_ domain.FileID,
+) (domain.Location, error) {
+	s.calls++
+
+	if s.err != nil {
+		return domain.Location{}, s.err
+	}
+
+	return s.location, nil
+}
+
 func newDeleteObjectsHarness(t *testing.T, files []domain.File) deleteObjectsHarness {
 	t.Helper()
 
@@ -59,10 +79,13 @@ func newDeleteObjectsHarness(t *testing.T, files []domain.File) deleteObjectsHar
 	repo := &stubFileLoaderSaver{files: files}
 	objects := &stubObjectDeleter{observer: tx}
 	publisher := &stubDeletedPublisher{}
+	uploads := &stubStagingLocator{err: domain.ErrUploadNotFound}
 
 	return deleteObjectsHarness{
-		handler:   NewDeleteObjectsHandler(repo, objects, publisher, tx, fixedClock{now: testNow}),
+		handler: NewDeleteObjectsHandler(
+			repo, uploads, objects, publisher, tx, fixedClock{now: testNow}),
 		files:     repo,
+		uploads:   uploads,
 		objects:   objects,
 		publisher: publisher,
 		tx:        tx,
@@ -178,4 +201,76 @@ func mustFileID(t *testing.T) domain.FileID {
 	require.NoError(t, err)
 
 	return id
+}
+
+func TestDeleteObjects_AlsoDropsTheStagingObject(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: deleted before processing ever copied the bytes out of staging,
+	// which is the case the locations list from the caller cannot know about.
+	file := testDeletingFile(t, domain.FileStatusDeleting)
+	h := newDeleteObjectsHarness(t, []domain.File{file})
+
+	uploadID, err := domain.NewUploadID()
+	require.NoError(t, err)
+
+	staging, err := domain.NewStagingLocation(uploadID)
+	require.NoError(t, err)
+
+	h.uploads.err = nil
+	h.uploads.location = staging
+
+	// Act
+	_, err = h.handler.Handle(context.Background(), DeleteObjectsCommand{
+		FileID:    file.ID(),
+		Locations: []domain.Location{file.Location()},
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.Contains(t, h.objects.deleted, staging,
+		"nobody else ever deletes it, so the bytes would stay in the bucket for good")
+	assert.Contains(t, h.objects.deleted, file.Location())
+}
+
+func TestDeleteObjects_WorksWhenNoUploadIsLeft(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file := testDeletingFile(t, domain.FileStatusDeleting)
+	h := newDeleteObjectsHarness(t, []domain.File{file})
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), DeleteObjectsCommand{
+		FileID:    file.ID(),
+		Locations: []domain.Location{file.Location()},
+	})
+
+	// Assert
+	require.NoError(t, err,
+		"a pruned upload row is not a reason to leave the file undeleted")
+	assert.True(t, got.Status.Equal(domain.FileStatusDeleted))
+	assert.Equal(t, 1, h.uploads.calls)
+}
+
+func TestDeleteObjects_StopsWhenTheStagingLookupBreaks(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	broken := errors.New("connection reset by peer")
+
+	file := testDeletingFile(t, domain.FileStatusDeleting)
+	h := newDeleteObjectsHarness(t, []domain.File{file})
+	h.uploads.err = broken
+
+	// Act
+	_, err := h.handler.Handle(context.Background(), DeleteObjectsCommand{
+		FileID:    file.ID(),
+		Locations: []domain.Location{file.Location()},
+	})
+
+	// Assert
+	require.ErrorIs(t, err, broken,
+		"deleting half the objects and reporting success would hide the leak")
+	assert.Empty(t, h.objects.deleted)
 }
