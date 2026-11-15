@@ -13,6 +13,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/internal/worker"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/filegrpc"
+	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/identity"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/messaging"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/policy"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/postgres"
@@ -62,14 +63,19 @@ func BuildServer(
 		return fail(fmt.Errorf("build url builder: %w", err))
 	}
 
+	now := clock.System{}
+
+	tokens, err := identity.New(cfg.Identity, now)
+	if err != nil {
+		return fail(fmt.Errorf("build identity signer: %w", err))
+	}
+
 	files, err := filegrpc.New(cfg.File)
 	if err != nil {
 		return fail(fmt.Errorf("open file client: %w", err))
 	}
 
 	closers = append(closers, func() { _ = files.Close() })
-
-	now := clock.System{}
 
 	profiles := postgres.NewProfiles(db)
 	avatars := postgres.NewAvatars(db)
@@ -89,7 +95,7 @@ func BuildServer(
 		BindEmail: usecase.NewBindEmailHandler(profiles, db, now),
 	}
 
-	api, err := rest.NewHandler(handlers, cfg.REST, logger)
+	api, err := rest.NewHandler(handlers, tokens, cfg.REST, logger)
 	if err != nil {
 		return fail(fmt.Errorf("build rest handler: %w", err))
 	}
@@ -124,8 +130,6 @@ func BuildServer(
 		Add("health server", healthServer).
 		Add("metrics server", metricsServer)
 
-	// pprof is opt in: unset means no profiling endpoint at all, because the one
-	// it exposes needs no credentials and answers to anything on the network.
 	if cfg.PprofServer.Disabled() {
 		logger.Info("pprof is disabled", "reason", "no address configured")
 
@@ -142,9 +146,6 @@ func BuildServer(
 	return runner, shutdown, nil
 }
 
-// The two resolvers need a profile and a projection at once, and the
-// repositories are split by aggregate, so the pair is composed here rather
-// than widening either repository.
 type currentAvatarSource struct {
 	*postgres.Profiles
 	*postgres.Avatars

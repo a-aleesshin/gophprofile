@@ -24,6 +24,7 @@ func validRelayConfig() RelayConfig {
 		MaxBackoff:             time.Minute,
 		MaxConsecutiveFailures: 3,
 		Lease:                  30 * time.Second,
+		MaxAge:                 24 * time.Hour,
 	}
 }
 
@@ -95,6 +96,11 @@ func TestNewRelay(t *testing.T) {
 			name: "zero lease", db: db, transport: TransportKafka,
 			sender: stubSender{}, clock: clock.System{},
 			mutate: func(c *RelayConfig) { c.Lease = 0 },
+		},
+		{
+			name: "zero max age", db: db, transport: TransportKafka,
+			sender: stubSender{}, clock: clock.System{},
+			mutate: func(c *RelayConfig) { c.MaxAge = 0 },
 		},
 	}
 

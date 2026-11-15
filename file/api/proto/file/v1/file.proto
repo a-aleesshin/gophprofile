@@ -60,6 +60,7 @@ message GetFileResponse {
 
 message DeleteFileRequest {
   string file_id = 1;
+  string owner_ref = 2;
 }
 
 message DeleteFileResponse {

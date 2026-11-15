@@ -23,6 +23,8 @@ type deletedFactPublisher interface {
 	PublishAvatarDeleted(ctx context.Context, fact AvatarDeletedFact) error
 }
 
+const deleteAvatarAttempts = 3
+
 type DeleteAvatarCommand struct {
 	AvatarID domain.AvatarID
 	UserID   domain.UserID
@@ -67,72 +69,72 @@ func (h *DeleteAvatarHandler) Handle(
 		return DeleteAvatarResult{}, fmt.Errorf("%w: user id is required", ErrInvalidCommand)
 	}
 
-	avatar, err := h.avatars.ByID(ctx, cmd.AvatarID)
-	if err != nil {
-		return DeleteAvatarResult{}, err
-	}
-
-	if !avatar.OwnedBy(cmd.UserID) {
-		return DeleteAvatarResult{}, fmt.Errorf("%w: %s", ErrForbidden, cmd.AvatarID.String())
-	}
-
-	if avatar.Status().Equal(domain.AvatarStatusDeleted) {
-		return DeleteAvatarResult{Status: avatar.Status()}, nil
-	}
-
-	profile, err := h.profiles.ByUserID(ctx, cmd.UserID)
-	if err != nil {
-		return DeleteAvatarResult{}, err
-	}
-
-	now := h.clock.Now()
-
-	if err := avatar.MarkDeleted(now); err != nil {
-		return DeleteAvatarResult{}, err
-	}
-
-	wasCurrent := profile.CurrentAvatarID().Equal(avatar.ID())
-
-	if wasCurrent {
-		if err := profile.ClearCurrentAvatar(now); err != nil {
+	for range deleteAvatarAttempts {
+		avatar, err := h.avatars.ByID(ctx, cmd.AvatarID)
+		if err != nil {
 			return DeleteAvatarResult{}, err
 		}
-	}
 
-	err = h.tx.InTx(ctx, func(ctx context.Context) error {
+		if !avatar.OwnedBy(cmd.UserID) {
+			return DeleteAvatarResult{}, fmt.Errorf("%w: %s", ErrForbidden, cmd.AvatarID.String())
+		}
+
+		if avatar.Status().Equal(domain.AvatarStatusDeleted) {
+			return DeleteAvatarResult{Status: avatar.Status()}, nil
+		}
+
+		profile, err := h.profiles.ByUserID(ctx, cmd.UserID)
+		if err != nil {
+			return DeleteAvatarResult{}, err
+		}
+
+		now := h.clock.Now()
+
+		if err := avatar.MarkDeleted(now); err != nil {
+			return DeleteAvatarResult{}, err
+		}
+
+		wasCurrent := profile.CurrentAvatarID().Equal(avatar.ID())
+
 		if wasCurrent {
-			if err := h.profiles.Save(ctx, &profile); err != nil {
-				return err
+			if err := profile.ClearCurrentAvatar(now); err != nil {
+				return DeleteAvatarResult{}, err
 			}
 		}
 
-		if err := h.avatars.Save(ctx, &avatar); err != nil {
-			return err
-		}
+		err = h.tx.InTx(ctx, func(ctx context.Context) error {
+			if wasCurrent {
+				if err := h.profiles.Save(ctx, &profile); err != nil {
+					return err
+				}
+			}
 
-		if avatar.FileID().IsZero() {
-			return nil
-		}
+			if err := h.avatars.Save(ctx, &avatar); err != nil {
+				return err
+			}
 
-		return h.publisher.PublishAvatarDeleted(ctx, AvatarDeletedFact{
-			AvatarID: avatar.ID(),
-			UserID:   avatar.UserID(),
-			FileID:   avatar.FileID(),
+			if avatar.FileID().IsZero() {
+				return nil
+			}
+
+			return h.publisher.PublishAvatarDeleted(ctx, AvatarDeletedFact{
+				AvatarID: avatar.ID(),
+				UserID:   avatar.UserID(),
+				FileID:   avatar.FileID(),
+			})
 		})
-	})
 
-	if errors.Is(err, ErrStaleVersion) {
-		current, reloadErr := h.avatars.ByID(ctx, cmd.AvatarID)
-		if reloadErr != nil {
-			return DeleteAvatarResult{}, reloadErr
+		if errors.Is(err, ErrStaleVersion) {
+			continue
 		}
 
-		return DeleteAvatarResult{Status: current.Status()}, nil
+		if err != nil {
+			return DeleteAvatarResult{}, err
+		}
+
+		return DeleteAvatarResult{Status: avatar.Status()}, nil
 	}
 
-	if err != nil {
-		return DeleteAvatarResult{}, err
-	}
-
-	return DeleteAvatarResult{Status: avatar.Status()}, nil
+	return DeleteAvatarResult{}, fmt.Errorf("%w: avatar %s",
+		ErrStaleVersion, cmd.AvatarID.String())
 }

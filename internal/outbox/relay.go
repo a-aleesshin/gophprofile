@@ -9,7 +9,11 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
-var ErrInvalidRelayConfig = errors.New("invalid relay config")
+var (
+	ErrInvalidRelayConfig = errors.New("invalid relay config")
+
+	ErrUnpublishable = errors.New("the broker will never accept this message")
+)
 
 type Pending struct {
 	ID           int64
@@ -32,11 +36,13 @@ type RelayConfig struct {
 	MaxBackoff             time.Duration `env:"MAX_BACKOFF" envDefault:"30s"`
 	MaxConsecutiveFailures int           `env:"MAX_CONSECUTIVE_FAILURES" envDefault:"3"`
 	Lease                  time.Duration `env:"LEASE" envDefault:"30s"`
+	MaxAge                 time.Duration `env:"MAX_AGE" envDefault:"24h"`
 }
 
 type RelayStats struct {
 	Published int
 	Failed    int
+	Parked    int
 }
 
 type Relay struct {
@@ -76,6 +82,8 @@ func NewRelay(
 			ErrInvalidRelayConfig)
 	case cfg.Lease <= 0:
 		return nil, fmt.Errorf("%w: lease must be positive", ErrInvalidRelayConfig)
+	case cfg.MaxAge <= 0:
+		return nil, fmt.Errorf("%w: max age must be positive", ErrInvalidRelayConfig)
 	}
 
 	return &Relay{db: db, transport: transport, sender: sender, clock: clock, cfg: cfg}, nil

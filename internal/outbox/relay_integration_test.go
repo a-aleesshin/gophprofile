@@ -167,6 +167,7 @@ func testRelay(
 		MaxBackoff:             time.Minute,
 		MaxConsecutiveFailures: 3,
 		Lease:                  30 * time.Second,
+		MaxAge:                 24 * time.Hour,
 	}
 
 	if mutate != nil {
@@ -1063,4 +1064,169 @@ func TestRelayReportsTheBacklogOfItsOwnTransportOnly(t *testing.T) {
 	// Assert
 	assert.InDelta(t, 0, backlogAge(t, TransportKafka), 0.001,
 		"a stuck rabbit relay must not make the kafka one look stuck too")
+}
+
+var errSendFailed = errors.New("broker is unreachable")
+
+type unpublishableSender struct {
+	calls int
+}
+
+func (s *unpublishableSender) Send(context.Context, Pending) error {
+	s.calls++
+
+	return fmt.Errorf("%w: the record is larger than the broker accepts", ErrUnpublishable)
+}
+
+func parkedRow(t *testing.T, id int64) (bool, int, string) {
+	t.Helper()
+
+	var (
+		failedAt  *time.Time
+		attempts  int
+		lastError *string
+	)
+
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(), `
+		SELECT failed_at, attempts, last_error FROM outbox WHERE id = $1`, id).
+		Scan(&failedAt, &attempts, &lastError))
+
+	reason := ""
+	if lastError != nil {
+		reason = *lastError
+	}
+
+	return failedAt != nil, attempts, reason
+}
+
+func TestRelayParksAMessageTheBrokerWillNeverAccept(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	sender := &unpublishableSender{}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	id := insertPending(t, TransportKafka, "key", 0, now)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Equal(t, 1, stats.Parked)
+
+	parked, attempts, reason := parkedRow(t, id)
+	assert.True(t, parked, "a message that can never be sent must stop being retried")
+	assert.Equal(t, 1, attempts)
+	assert.Contains(t, reason, "larger than the broker accepts")
+}
+
+func TestRelayLeavesAParkedMessageAlone(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	sender := &unpublishableSender{}
+
+	insertPending(t, TransportKafka, "key", 0, now)
+
+	_, err := testRelay(t, TransportKafka, sender, now, nil).Tick(t.Context())
+	require.NoError(t, err)
+
+	// Act: a later relay, so an expired lease cannot be what keeps the row out.
+	later := testRelay(t, TransportKafka, sender, now.Add(time.Hour), nil)
+
+	stats, err := later.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.Failed, "the second tick must not see it at all")
+	assert.Equal(t, 1, sender.calls, "and must not hand it to the broker again")
+}
+
+func TestAParkedMessageStopsBlockingItsScope(t *testing.T) {
+	// Arrange: both messages share a partition key, so order matters between them.
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+
+	bad := insertPending(t, TransportKafka, "same-key", 0, now)
+	good := insertPending(t, TransportKafka, "same-key", 0, now)
+
+	sender := &scriptedSender{refuse: map[int64]error{
+		bad: fmt.Errorf("%w: too large", ErrUnpublishable),
+	}}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	// Act
+	first, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+
+	second, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, 1, first.Parked)
+	assert.Equal(t, 1, second.Published,
+		"once the bad message is parked the rest of the key moves again")
+
+	parked, _, _ := parkedRow(t, bad)
+	assert.True(t, parked)
+	assert.NotNil(t, readRow(t, good).PublishedAt)
+}
+
+func TestRelayParksAMessageThatHasBeenFailingForTooLong(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failAll: true, err: errSendFailed}, now, func(c *RelayConfig) {
+			c.MaxAge = time.Hour
+		})
+
+	var id int64
+
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(), `
+		INSERT INTO outbox (transport, destination, partition_key, message_type, payload,
+			attempts, available_at, created_at)
+		VALUES ($1, 'test.destination', 'key', 'TestMessage', '{"x":1}', 9, $2, $3)
+		RETURNING id`, TransportKafka, now, now.Add(-2*time.Hour)).Scan(&id))
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Parked,
+		"an outage is survivable, two hours of the same failure is a stuck message")
+
+	parked, _, _ := parkedRow(t, id)
+	assert.True(t, parked)
+}
+
+func TestRelayKeepsRetryingAYoungFailure(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failAll: true, err: errSendFailed}, now, func(c *RelayConfig) {
+			c.MaxAge = time.Hour
+		})
+
+	id := insertPending(t, TransportKafka, "key", 0, now)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Equal(t, 0, stats.Parked, "a broker that is merely down must not park anything")
+
+	parked, _, _ := parkedRow(t, id)
+	assert.False(t, parked)
 }

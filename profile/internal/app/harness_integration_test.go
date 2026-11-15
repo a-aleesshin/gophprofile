@@ -25,6 +25,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/filegrpc"
+	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/identity"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/policy"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/urls"
 	"github.com/a-aleesshin/gophprofile/profile/internal/config"
@@ -186,6 +187,11 @@ func testObservability(t *testing.T) config.Observability {
 	}
 }
 
+const (
+	testIdentitySecret = "0123456789abcdef0123456789abcdef"
+	testIdentityLogin  = "fedcba9876543210fedcba9876543210"
+)
+
 func serverConfig(t *testing.T) config.Server {
 	t.Helper()
 
@@ -196,6 +202,11 @@ func serverConfig(t *testing.T) config.Server {
 		// assemble the server: it only matters once an upload is started.
 		File: filegrpc.Config{
 			Addr: freePort(t), Token: testFileToken, Timeout: time.Second,
+		},
+		Identity: identity.Config{
+			Secret:      testIdentitySecret,
+			LoginSecret: testIdentityLogin,
+			TTL:         time.Hour,
 		},
 		REST: rest.Config{Timeout: 2 * time.Second},
 		HTTP: testServers(t),
@@ -224,6 +235,7 @@ func workerConfig(t *testing.T) config.Worker {
 			MinBackoff:             100 * time.Millisecond,
 			MaxBackoff:             time.Second,
 			MaxConsecutiveFailures: 3,
+			MaxAge:                 24 * time.Hour,
 		},
 		Jobs: config.Jobs{
 			BacklogInterval:   200 * time.Millisecond,

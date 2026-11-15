@@ -255,7 +255,15 @@ func (s *Server) DeleteFile(
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	result, err := s.handlers.DeleteFile.Handle(ctx, usecase.DeleteFileCommand{FileID: fileID})
+	ownerRef, err := domain.NewOwnerRef(request.GetOwnerRef())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	result, err := s.handlers.DeleteFile.Handle(ctx, usecase.DeleteFileCommand{
+		FileID:   fileID,
+		OwnerRef: ownerRef,
+	})
 	if err != nil {
 		return nil, toStatus(err)
 	}

@@ -220,6 +220,7 @@ func workerConfig(t *testing.T) config.Worker {
 			MaxBackoff:             30 * time.Second,
 			MaxConsecutiveFailures: 3,
 			Lease:                  30 * time.Second,
+			MaxAge:                 24 * time.Hour,
 		},
 		Jobs: config.Jobs{
 			BacklogInterval:   200 * time.Millisecond,

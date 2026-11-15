@@ -17,8 +17,8 @@ func TestOutboxTickCountsBothOutcomes(t *testing.T) {
 	outboxFailures.Reset()
 
 	// Act
-	ObserveOutboxTick("kafka", 7, 2)
-	ObserveOutboxTick("kafka", 3, 0)
+	ObserveOutboxTick("kafka", 7, 2, 0)
+	ObserveOutboxTick("kafka", 3, 0, 0)
 
 	// Assert
 	assert.InDelta(t, 10, testutil.ToFloat64(outboxPublished.WithLabelValues("kafka")), 0.001)
@@ -30,8 +30,8 @@ func TestOutboxTickKeepsTransportsApart(t *testing.T) {
 	outboxPublished.Reset()
 
 	// Act
-	ObserveOutboxTick("kafka", 1, 0)
-	ObserveOutboxTick("rabbit", 4, 0)
+	ObserveOutboxTick("kafka", 1, 0, 0)
+	ObserveOutboxTick("rabbit", 4, 0, 0)
 
 	// Assert
 	assert.InDelta(t, 1, testutil.ToFloat64(outboxPublished.WithLabelValues("kafka")), 0.001)
@@ -45,7 +45,7 @@ func TestAnEmptyTickCreatesNoSeries(t *testing.T) {
 	outboxFailures.Reset()
 
 	// Act
-	ObserveOutboxTick("kafka", 0, 0)
+	ObserveOutboxTick("kafka", 0, 0, 0)
 
 	// Assert
 	assert.Equal(t, 0, testutil.CollectAndCount(outboxPublished),
@@ -138,7 +138,7 @@ func TestGRPCCallIsCountedByCode(t *testing.T) {
 
 func TestEverySeriesIsNamespaced(t *testing.T) {
 	// Arrange
-	ObserveOutboxTick("kafka", 1, 1)
+	ObserveOutboxTick("kafka", 1, 1, 0)
 	SetOutboxBacklogAge("kafka", time.Second)
 	ObserveInbox("file.worker", 1, 0, 0, 0)
 	ObserveHTTPRequest("GET /healthz", "GET", 200, time.Millisecond)
@@ -172,4 +172,29 @@ func TestEverySeriesIsNamespaced(t *testing.T) {
 		assert.True(t, strings.HasPrefix(name, namespace+"_"), name)
 		assert.True(t, exposedNames[name], "%s is not exposed on /metrics", name)
 	}
+}
+
+func TestParkedMessagesAreCountedApartFromFailures(t *testing.T) {
+	// Arrange
+	outboxFailures.Reset()
+	outboxParked.Reset()
+
+	// Act
+	ObserveOutboxTick("kafka", 0, 3, 1)
+
+	// Assert
+	assert.InDelta(t, 3, testutil.ToFloat64(outboxFailures.WithLabelValues("kafka")), 0.001)
+	assert.InDelta(t, 1, testutil.ToFloat64(outboxParked.WithLabelValues("kafka")), 0.001,
+		"a parked message needs a human, a failed one only needs patience")
+}
+
+func TestNothingParkedCreatesNoSeries(t *testing.T) {
+	// Arrange
+	outboxParked.Reset()
+
+	// Act
+	ObserveOutboxTick("kafka", 1, 1, 0)
+
+	// Assert
+	assert.Equal(t, 0, testutil.CollectAndCount(outboxParked))
 }

@@ -16,6 +16,17 @@ type bindEmailRequest struct {
 	Email string `json:"email"`
 }
 
+type openSessionRequest struct {
+	UserID string `json:"user_id"`
+	Secret string `json:"secret"`
+}
+
+type openSessionBody struct {
+	UserID    string    `json:"user_id"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 type uploadTicketBody struct {
 	URL       string            `json:"url"`
 	Fields    map[string]string `json:"fields"`

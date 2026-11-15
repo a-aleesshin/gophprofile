@@ -450,14 +450,38 @@ func TestDeleteFile(t *testing.T) {
 
 	// Act
 	response, err := client.DeleteFile(t.Context(), &filev1.DeleteFileRequest{
-		FileId: testFileID,
+		FileId:   testFileID,
+		OwnerRef: "user-123",
 	})
 
 	// Assert
 	require.NoError(t, err)
 	assert.Equal(t, testFileID, deleter.cmd.FileID.String())
+	assert.Equal(t, "user-123", deleter.cmd.OwnerRef.String(),
+		"the owner travels with the request, so the use case can refuse a stranger")
 	assert.Equal(t, filev1.FileStatus_FILE_STATUS_DELETING, response.GetStatus(),
 		"the caller needs to know whether the file went to deleting or was already gone")
+}
+
+func TestDeleteFileRefusesARequestWithoutAnOwner(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	deleter := &stubDeleteFile{}
+
+	handlers := fullHandlers()
+	handlers.DeleteFile = deleter
+
+	client := dial(t, handlers)
+
+	// Act
+	_, err := client.DeleteFile(t.Context(), &filev1.DeleteFileRequest{FileId: testFileID})
+
+	// Assert
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.True(t, deleter.cmd.FileID.IsZero(),
+		"a delete with nobody to authorize against must not reach the use case")
 }
 
 func TestMapsUseCaseErrorsToCodes(t *testing.T) {

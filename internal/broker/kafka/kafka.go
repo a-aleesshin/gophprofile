@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
@@ -60,7 +61,7 @@ func (p *Producer) Send(ctx context.Context, message outbox.Pending) error {
 	}
 
 	if message.PartitionKey == "" {
-		return fmt.Errorf("%w: %s", ErrNoPartitionKey, message.Type)
+		return fmt.Errorf("%w: %w: %s", outbox.ErrUnpublishable, ErrNoPartitionKey, message.Type)
 	}
 
 	record := &kgo.Record{
@@ -70,10 +71,32 @@ func (p *Producer) Send(ctx context.Context, message outbox.Pending) error {
 	}
 
 	if err := p.client.ProduceSync(ctx, record).FirstErr(); err != nil {
+		if permanent(err) {
+			return fmt.Errorf("%w: produce %s to %s: %w",
+				outbox.ErrUnpublishable, message.Type, message.Destination, err)
+		}
+
 		return fmt.Errorf("produce %s to %s: %w", message.Type, message.Destination, err)
 	}
 
 	return nil
+}
+
+func permanent(err error) bool {
+	for _, kind := range []error{
+		kerr.MessageTooLarge,
+		kerr.RecordListTooLarge,
+		kerr.InvalidRecord,
+		kerr.InvalidTopicException,
+		kerr.UnsupportedForMessageFormat,
+		kerr.UnsupportedVersion,
+	} {
+		if errors.Is(err, kind) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *Producer) Ping(ctx context.Context) error {

@@ -21,14 +21,21 @@
     <section class="bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 p-6 space-y-4">
       <h2 class="text-xl font-semibold">Identity</h2>
       <p class="text-white/60 text-sm">
-        There is no authentication yet: <code class="text-purple-300">X-User-ID</code> is taken on
-        trust and every owned call carries it.
+        Owned calls carry a signed token, not a user name. The page trades the shared
+        secret (<code class="text-purple-300">IDENTITY_LOGIN_SECRET</code>) for one and
+        sends it as <code class="text-purple-300">Authorization: Bearer</code>. Real login
+        is still deferred: anyone holding the secret can speak for any user.
       </p>
 
       <div class="grid md:grid-cols-2 gap-4">
         <div>
           <label for="userId" class="block text-sm font-medium mb-2">User ID</label>
           <input type="text" id="userId" value="user-1" placeholder="user-1"
+            class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500">
+        </div>
+        <div>
+          <label for="loginSecret" class="block text-sm font-medium mb-2">Login secret</label>
+          <input type="password" id="loginSecret" placeholder="IDENTITY_LOGIN_SECRET"
             class="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-purple-500">
         </div>
         <div>
@@ -147,9 +154,43 @@
     let nextCursor = '';
     let lastAvatarId = '';
 
+    const secretOf = () => el('loginSecret').value;
+
+    let session = { user: '', token: '', expires: 0 };
+
+    async function tokenFor(user) {
+      const fresh = session.user === user && session.expires - Date.now() > 30000;
+      if (fresh) return session.token;
+
+      const { response, body } = await call('POST', '/api/v1/sessions', {
+        json: { user_id: user, secret: secretOf() },
+      });
+
+      if (!response.ok) {
+        throw new Error(response.status === 401
+          ? 'wrong login secret'
+          : `could not open a session: ${response.status}`);
+      }
+
+      session = {
+        user,
+        token: body.token,
+        expires: new Date(body.expires_at).getTime(),
+      };
+
+      return session.token;
+    }
+
     async function call(method, path, { body, json, headers } = {}) {
       const started = performance.now();
       const options = { method, headers: { ...headers } };
+
+      const user = options.headers['X-User-ID'];
+
+      if (user !== undefined) {
+        delete options.headers['X-User-ID'];
+        options.headers['Authorization'] = `Bearer ${await tokenFor(user)}`;
+      }
 
       if (json !== undefined) {
         options.body = JSON.stringify(json);

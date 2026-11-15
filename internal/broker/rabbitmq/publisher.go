@@ -92,7 +92,7 @@ func (p *Publisher) Send(ctx context.Context, message outbox.Pending) error {
 
 	select {
 	case returned := <-p.returns:
-		return fmt.Errorf("%w: %s (%d %s)",
+		return fmt.Errorf("%w: %w: %s (%d %s)", outbox.ErrUnpublishable,
 			ErrUnroutable, returned.RoutingKey, returned.ReplyCode, returned.ReplyText)
 	default:
 	}

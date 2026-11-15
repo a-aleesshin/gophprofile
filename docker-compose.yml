@@ -237,6 +237,9 @@ services:
     environment:
       <<: *profile-env
       HTTP_ADDR: ":8080"
+      IDENTITY_SECRET: ${IDENTITY_SECRET:?set IDENTITY_SECRET to at least 32 bytes}
+      IDENTITY_LOGIN_SECRET: ${IDENTITY_LOGIN_SECRET:?set IDENTITY_LOGIN_SECRET to at least 32 bytes}
+      IDENTITY_PREVIOUS_SECRET: ${IDENTITY_PREVIOUS_SECRET:-}
     depends_on:
       profile-migrate:
         condition: service_completed_successfully

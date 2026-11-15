@@ -41,6 +41,29 @@ func waitReady(t *testing.T, addr string) {
 	assert.Equal(t, "ok", body.Status)
 }
 
+// openSession walks the login the demo page walks: trade the shared secret for
+// a signed token and carry that, because the user id alone no longer authorizes.
+func openSession(t *testing.T, addr, user string) string {
+	t.Helper()
+
+	response, err := http.Post("http://"+addr+"/api/v1/sessions", "application/json",
+		strings.NewReader(`{"user_id":"`+user+`","secret":"`+testIdentityLogin+`"}`))
+	require.NoError(t, err)
+
+	defer func() { _ = response.Body.Close() }()
+
+	require.Equal(t, http.StatusCreated, response.StatusCode)
+
+	var body struct {
+		Token string `json:"token"`
+	}
+
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.NotEmpty(t, body.Token)
+
+	return body.Token
+}
+
 func TestBuildServerStartsAndAnswers(t *testing.T) {
 	// Arrange
 	cfg := serverConfig(t)
@@ -101,13 +124,31 @@ func TestBuildServerStartsAndAnswers(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, response.StatusCode)
 	})
 
-	t.Run("an upload gives up when file is unreachable", func(t *testing.T) {
+	t.Run("a named user without a token is nobody", func(t *testing.T) {
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
 			"http://"+cfg.HTTP.Addr+"/api/v1/avatars/uploads",
 			strings.NewReader(`{"file_name":"a.jpg","mime_type":"image/jpeg","size_bytes":2048}`))
 		require.NoError(t, err)
 
 		request.Header.Set("X-User-ID", "user-1")
+		request.Header.Set("Content-Type", "application/json")
+
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+
+		defer func() { _ = response.Body.Close() }()
+
+		assert.Equal(t, http.StatusUnauthorized, response.StatusCode,
+			"the header the gateway strips must not authorize anything on its own")
+	})
+
+	t.Run("an upload gives up when file is unreachable", func(t *testing.T) {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+			"http://"+cfg.HTTP.Addr+"/api/v1/avatars/uploads",
+			strings.NewReader(`{"file_name":"a.jpg","mime_type":"image/jpeg","size_bytes":2048}`))
+		require.NoError(t, err)
+
+		request.Header.Set("Authorization", "Bearer "+openSession(t, cfg.HTTP.Addr, "user-1"))
 		request.Header.Set("Content-Type", "application/json")
 
 		response, err := http.DefaultClient.Do(request)

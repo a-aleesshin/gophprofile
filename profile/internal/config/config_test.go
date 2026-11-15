@@ -27,6 +27,8 @@ func setServerEnv(t *testing.T) {
 
 	setCommonEnv(t)
 	t.Setenv("HTTP_ADDR", ":8080")
+	t.Setenv("IDENTITY_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("IDENTITY_LOGIN_SECRET", "fedcba9876543210fedcba9876543210")
 }
 
 func setWorkerEnv(t *testing.T) {

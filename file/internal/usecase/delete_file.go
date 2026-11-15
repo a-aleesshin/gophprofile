@@ -60,8 +60,11 @@ func (h *DeleteFileHandler) Handle(
 	ctx context.Context,
 	cmd DeleteFileCommand,
 ) (DeleteFileResult, error) {
-	if cmd.FileID.IsZero() {
+	switch {
+	case cmd.FileID.IsZero():
 		return DeleteFileResult{}, fmt.Errorf("%w: file id is required", ErrInvalidCommand)
+	case cmd.OwnerRef.IsZero():
+		return DeleteFileResult{}, fmt.Errorf("%w: owner is required", ErrInvalidCommand)
 	}
 
 	file, err := h.files.ByID(ctx, cmd.FileID)
@@ -69,7 +72,7 @@ func (h *DeleteFileHandler) Handle(
 		return DeleteFileResult{}, err
 	}
 
-	if !cmd.OwnerRef.IsZero() && !file.IsOwnedBy(cmd.OwnerRef) {
+	if !file.IsOwnedBy(cmd.OwnerRef) {
 		return DeleteFileResult{}, fmt.Errorf("%w: file %s",
 			ErrOwnerMismatch, cmd.FileID.String())
 	}

@@ -103,6 +103,9 @@ type stubAvatars struct {
 	staleStatus domain.AvatarStatus
 	staleBefore time.Time
 	staleLimit  int
+
+	staleSaves int
+	onStale    func()
 }
 
 func (s *stubAvatars) ByID(_ context.Context, id domain.AvatarID) (domain.Avatar, error) {
@@ -139,6 +142,16 @@ func (s *stubAvatars) Create(_ context.Context, avatar *domain.Avatar) error {
 
 func (s *stubAvatars) Save(_ context.Context, avatar *domain.Avatar) error {
 	s.saved = append(s.saved, *avatar)
+
+	if s.staleSaves > 0 {
+		s.staleSaves--
+
+		if s.onStale != nil {
+			s.onStale()
+		}
+
+		return ErrStaleVersion
+	}
 
 	return s.saveErr
 }
