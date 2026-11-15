@@ -154,7 +154,7 @@ func BuildWorker(
 	closers = append(closers, facts.Close)
 
 	factConsumer, err := inbox.NewConsumer(consumerName, facts, messageInbox,
-		messaging.FactHandlers(deleteFile))
+		messaging.FactHandlers(deleteFile), cfg.Inbox.MaxAttempts)
 	if err != nil {
 		return fail(fmt.Errorf("build fact consumer: %w", err))
 	}
@@ -170,7 +170,8 @@ func BuildWorker(
 
 		closers = append(closers, func() { _ = source.Close() })
 
-		consumer, consumerErr := inbox.NewConsumer(consumerName, source, messageInbox, commands)
+		consumer, consumerErr := inbox.NewConsumer(
+			consumerName, source, messageInbox, commands, cfg.Inbox.MaxAttempts)
 		if consumerErr != nil {
 			return fail(fmt.Errorf("build consumer for %s: %w", routingKey, consumerErr))
 		}
@@ -279,8 +280,11 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned processed messages", "removed", removed)
+			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
+				logger.Info("pruned inbox rows",
+					"processed", removed.Processed,
+					"failures", removed.Failures,
+					"dropped", removed.Dropped)
 			}
 
 			return nil

@@ -32,7 +32,7 @@ func TestNewConsumer(t *testing.T) {
 		t.Parallel()
 
 		// Act
-		consumer, err := NewConsumer("file.worker", stubSource{}, in, handlers)
+		consumer, err := NewConsumer("file.worker", stubSource{}, in, handlers, 3)
 
 		// Assert
 		require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestNewConsumer(t *testing.T) {
 		// Arrange
 		mutable := map[string]Handler{"ProcessFile": Repeatable(noopHandler)}
 
-		consumer, err := NewConsumer("file.worker", stubSource{}, in, mutable)
+		consumer, err := NewConsumer("file.worker", stubSource{}, in, mutable, 3)
 		require.NoError(t, err)
 
 		// Act
@@ -56,27 +56,42 @@ func TestNewConsumer(t *testing.T) {
 	})
 
 	tests := []struct {
-		name     string
-		consumer string
-		source   Source
-		inbox    *Inbox
-		handlers map[string]Handler
+		name        string
+		consumer    string
+		source      Source
+		inbox       *Inbox
+		handlers    map[string]Handler
+		maxAttempts int
 	}{
-		{name: "no name", source: stubSource{}, inbox: in, handlers: handlers},
+		{name: "no name", source: stubSource{}, inbox: in, handlers: handlers, maxAttempts: 3},
 		{
 			name: "name longer than the column", consumer: strings.Repeat("x", 65),
-			source: stubSource{}, inbox: in, handlers: handlers,
+			source: stubSource{}, inbox: in, handlers: handlers, maxAttempts: 3,
 		},
-		{name: "no source", consumer: "file.worker", inbox: in, handlers: handlers},
-		{name: "no inbox", consumer: "file.worker", source: stubSource{}, handlers: handlers},
-		{name: "no handlers", consumer: "file.worker", source: stubSource{}, inbox: in},
+		{
+			name: "no source", consumer: "file.worker", inbox: in,
+			handlers: handlers, maxAttempts: 3,
+		},
+		{
+			name: "no inbox", consumer: "file.worker", source: stubSource{},
+			handlers: handlers, maxAttempts: 3,
+		},
+		{
+			name: "no handlers", consumer: "file.worker", source: stubSource{},
+			inbox: in, maxAttempts: 3,
+		},
 		{
 			name: "handler without a type", consumer: "file.worker", source: stubSource{},
 			inbox: in, handlers: map[string]Handler{"": Repeatable(noopHandler)},
+			maxAttempts: 3,
 		},
 		{
 			name: "nil handler", consumer: "file.worker", source: stubSource{},
-			inbox: in, handlers: map[string]Handler{"ProcessFile": {}},
+			inbox: in, handlers: map[string]Handler{"ProcessFile": {}}, maxAttempts: 3,
+		},
+		{
+			name: "no attempt limit", consumer: "file.worker", source: stubSource{},
+			inbox: in, handlers: handlers,
 		},
 	}
 
@@ -85,7 +100,8 @@ func TestNewConsumer(t *testing.T) {
 			t.Parallel()
 
 			// Act
-			consumer, err := NewConsumer(test.consumer, test.source, test.inbox, test.handlers)
+			consumer, err := NewConsumer(
+				test.consumer, test.source, test.inbox, test.handlers, test.maxAttempts)
 
 			// Assert
 			require.ErrorIs(t, err, ErrInvalidConsumer)
@@ -154,7 +170,7 @@ func routingConsumer(t *testing.T, source Source) *Consumer {
 	t.Helper()
 
 	consumer, err := NewConsumer("file.worker", source, NewInbox(pgtx.New(nil)),
-		map[string]Handler{"FileProcessed": Repeatable(noopHandler)})
+		map[string]Handler{"FileProcessed": Repeatable(noopHandler)}, 3)
 	require.NoError(t, err)
 
 	return consumer

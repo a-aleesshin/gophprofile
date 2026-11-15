@@ -45,18 +45,24 @@ func Transactional(run func(ctx context.Context, message outbox.Envelope) error)
 	return Handler{run: run, transactional: true}
 }
 
+type ConsumerConfig struct {
+	MaxAttempts int `env:"MAX_ATTEMPTS" envDefault:"10"`
+}
+
 type Stats struct {
 	Handled   int
 	Duplicate int
 	Retried   int
 	Dropped   int
+	Exhausted int
 }
 
 type Consumer struct {
-	name     string
-	source   Source
-	inbox    *Inbox
-	handlers map[string]Handler
+	name        string
+	source      Source
+	inbox       *Inbox
+	handlers    map[string]Handler
+	maxAttempts int
 }
 
 func NewConsumer(
@@ -64,6 +70,7 @@ func NewConsumer(
 	source Source,
 	in *Inbox,
 	handlers map[string]Handler,
+	maxAttempts int,
 ) (*Consumer, error) {
 	switch {
 	case name == "":
@@ -76,6 +83,10 @@ func NewConsumer(
 		return nil, fmt.Errorf("%w: inbox is required", ErrInvalidConsumer)
 	case len(handlers) == 0:
 		return nil, fmt.Errorf("%w: at least one handler is required", ErrInvalidConsumer)
+	case maxAttempts <= 0:
+		return nil, fmt.Errorf(
+			"%w: max attempts must be positive, or a message nothing can apply blocks its partition forever",
+			ErrInvalidConsumer)
 	}
 
 	routes := make(map[string]Handler, len(handlers))
@@ -93,7 +104,13 @@ func NewConsumer(
 		routes[messageType] = handler
 	}
 
-	return &Consumer{name: name, source: source, inbox: in, handlers: routes}, nil
+	return &Consumer{
+		name:        name,
+		source:      source,
+		inbox:       in,
+		handlers:    routes,
+		maxAttempts: maxAttempts,
+	}, nil
 }
 
 func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
@@ -163,6 +180,24 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 				continue
 			}
 
+			failure, recordErr := c.inbox.RecordFailure(
+				ctx, c.name, envelope.MessageID, err, c.maxAttempts)
+			if recordErr != nil {
+				return stats, errors.Join(err, recordErr)
+			}
+
+			if failure.Dropped {
+				reason := fmt.Sprintf("gave up after %d attempts: %s", failure.Attempts, err)
+
+				if dropErr := delivery.Drop(ctx, reason); dropErr != nil {
+					return stats, fmt.Errorf("drop exhausted message: %w", dropErr)
+				}
+
+				stats.Exhausted++
+
+				continue
+			}
+
 			if retryErr := delivery.Retry(ctx); retryErr != nil {
 				return stats, fmt.Errorf("retry message: %w", retryErr)
 			}
@@ -191,7 +226,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 		stats, err := c.Consume(ctx)
 
 		metrics.ObserveInbox(c.name,
-			stats.Handled, stats.Duplicate, stats.Retried, stats.Dropped)
+			stats.Handled, stats.Duplicate, stats.Retried, stats.Dropped, stats.Exhausted)
 
 		if err != nil {
 			return err

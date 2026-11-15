@@ -84,6 +84,7 @@ const (
 	OutcomeDuplicate = "duplicate"
 	OutcomeRetried   = "retried"
 	OutcomeDropped   = "dropped"
+	OutcomeExhausted = "exhausted"
 )
 
 func ObserveOutboxTick(transport string, published, failed, parked int) {
@@ -106,12 +107,13 @@ func SetOutboxBacklogAge(transport string, age time.Duration) {
 	outboxBacklogAge.WithLabelValues(transport).Set(age.Seconds())
 }
 
-func ObserveInbox(consumer string, handled, duplicate, retried, dropped int) {
+func ObserveInbox(consumer string, handled, duplicate, retried, dropped, exhausted int) {
 	for outcome, count := range map[string]int{
 		OutcomeHandled:   handled,
 		OutcomeDuplicate: duplicate,
 		OutcomeRetried:   retried,
 		OutcomeDropped:   dropped,
+		OutcomeExhausted: exhausted,
 	} {
 		if count > 0 {
 			inboxMessages.WithLabelValues(consumer, outcome).Add(float64(count))

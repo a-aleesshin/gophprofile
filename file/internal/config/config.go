@@ -46,6 +46,7 @@ type Worker struct {
 	Jobs        Jobs
 	OutboxPrune outbox.PrunerConfig
 	InboxPrune  inbox.PrunerConfig
+	Inbox       inbox.ConsumerConfig
 
 	Health        health.Config
 	HealthServer  httpserver.Config
@@ -102,6 +103,7 @@ func LoadWorker() (Worker, error) {
 		func() error { return config.LoadSection(&cfg.Jobs, "JOBS_") },
 		func() error { return config.LoadSection(&cfg.OutboxPrune, "PRUNE_") },
 		func() error { return config.LoadSection(&cfg.InboxPrune, "PRUNE_") },
+		func() error { return config.LoadSection(&cfg.Inbox, "CONSUME_") },
 		func() error { return config.LoadSection(&cfg.Health, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.HealthServer, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.MetricsServer, "METRICS_") },

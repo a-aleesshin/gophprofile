@@ -74,7 +74,7 @@ func TestInboxCountsOnlyWhatHappened(t *testing.T) {
 	inboxMessages.Reset()
 
 	// Act
-	ObserveInbox("file.worker", 5, 1, 0, 2)
+	ObserveInbox("file.worker", 5, 1, 0, 2, 0)
 
 	// Assert
 	assert.InDelta(t, 5,
@@ -140,7 +140,7 @@ func TestEverySeriesIsNamespaced(t *testing.T) {
 	// Arrange
 	ObserveOutboxTick("kafka", 1, 1, 0)
 	SetOutboxBacklogAge("kafka", time.Second)
-	ObserveInbox("file.worker", 1, 0, 0, 0)
+	ObserveInbox("file.worker", 1, 0, 0, 0, 0)
 	ObserveHTTPRequest("GET /healthz", "GET", 200, time.Millisecond)
 	ObserveGRPCCall(KindUnary, "/x/Y", "OK", time.Millisecond)
 

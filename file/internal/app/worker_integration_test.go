@@ -235,7 +235,10 @@ func workerConfig(t *testing.T) config.Worker {
 		OutboxPrune: outbox.PrunerConfig{
 			Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
 		},
-		InboxPrune:    inbox.PrunerConfig{Retention: 336 * time.Hour, BatchSize: 100},
+		InboxPrune: inbox.PrunerConfig{
+			Retention: 336 * time.Hour, DroppedRetention: 720 * time.Hour, BatchSize: 100,
+		},
+		Inbox:         inbox.ConsumerConfig{MaxAttempts: 10},
 		Health:        health.Config{Timeout: 2 * time.Second},
 		HealthServer:  servers(),
 		MetricsServer: servers(),

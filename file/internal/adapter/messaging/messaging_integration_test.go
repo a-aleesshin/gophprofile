@@ -379,7 +379,7 @@ func TestAvatarDeletedIsAppliedInsideATransaction(t *testing.T) {
 
 	consumer, err := inbox.NewConsumer("file.worker.facts",
 		&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
-		inbox.NewInbox(sharedDB), FactHandlers(deleter))
+		inbox.NewInbox(sharedDB), FactHandlers(deleter), 10)
 	require.NoError(t, err)
 
 	// Act
@@ -422,7 +422,7 @@ func TestARedeliveredAvatarDeletedIsNotAppliedTwice(t *testing.T) {
 	newConsumer := func(delivery inbox.Delivery) *inbox.Consumer {
 		consumer, err := inbox.NewConsumer("file.worker.facts",
 			&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
-			inbox.NewInbox(sharedDB), handlers)
+			inbox.NewInbox(sharedDB), handlers, 10)
 		require.NoError(t, err)
 
 		return consumer
