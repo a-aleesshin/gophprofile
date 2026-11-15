@@ -231,7 +231,9 @@ func workerConfig(t *testing.T) config.Worker {
 			ReapStaleAfter:    15 * time.Minute,
 			PruneInterval:     time.Hour,
 		},
-		OutboxPrune:   outbox.PrunerConfig{Retention: 72 * time.Hour, BatchSize: 100},
+		OutboxPrune: outbox.PrunerConfig{
+			Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+		},
 		InboxPrune:    inbox.PrunerConfig{Retention: 336 * time.Hour, BatchSize: 100},
 		Health:        health.Config{Timeout: 2 * time.Second},
 		HealthServer:  servers(),

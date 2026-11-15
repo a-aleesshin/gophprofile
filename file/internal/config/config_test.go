@@ -80,6 +80,8 @@ func TestLoadWorker(t *testing.T) {
 
 	assert.Equal(t, time.Hour, cfg.Jobs.PruneInterval)
 	assert.Equal(t, 72*time.Hour, cfg.OutboxPrune.Retention)
+	assert.Equal(t, 720*time.Hour, cfg.OutboxPrune.ParkedRetention,
+		"a parked row is an incident and outlives a published one by design")
 	assert.Equal(t, 1000, cfg.OutboxPrune.BatchSize)
 	assert.Equal(t, 336*time.Hour, cfg.InboxPrune.Retention,
 		"the inbox window must outlast the broker retention, or a replay is applied twice")

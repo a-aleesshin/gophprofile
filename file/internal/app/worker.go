@@ -248,8 +248,9 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned published outbox rows", "removed", removed)
+			if removed.Published > 0 || removed.Parked > 0 {
+				logger.Info("pruned outbox rows",
+					"published", removed.Published, "parked", removed.Parked)
 			}
 
 			return nil

@@ -871,7 +871,7 @@ func TestPrunerRemovesOnlyPublishedRowsPastRetention(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: 72 * time.Hour, BatchSize: 100})
+		PrunerConfig{Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100})
 	require.NoError(t, err)
 
 	// Act
@@ -879,7 +879,8 @@ func TestPrunerRemovesOnlyPublishedRowsPastRetention(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), removed)
+	assert.Equal(t, int64(1), removed.Published)
+	assert.Zero(t, removed.Parked)
 
 	assert.False(t, rowExists(t, old))
 	assert.True(t, rowExists(t, recent), "inside the retention window it stays for debugging")
@@ -902,20 +903,20 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
-	first, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	first, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	second, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	second, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	third, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	third, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	fourth, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	fourth, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
 	// Assert
@@ -938,7 +939,7 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
@@ -949,9 +950,9 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	assert.Equal(t, int64(5), removed,
+	assert.Equal(t, int64(5), removed.Published,
 		"a pass that stopped after one batch could never keep up with the relay")
-	assert.Zero(t, again)
+	assert.Zero(t, again.Published)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
@@ -974,7 +975,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 1})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 1})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -987,7 +988,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	require.Equal(t, context.Canceled, err,
 		"the pass checks the context between batches itself, so shutdown does not "+
 			"wait for a long backlog and the error arrives unwrapped by the driver")
-	assert.Zero(t, removed)
+	assert.Zero(t, removed.Published)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
@@ -1229,4 +1230,101 @@ func TestRelayKeepsRetryingAYoungFailure(t *testing.T) {
 
 	parked, _, _ := parkedRow(t, id)
 	assert.False(t, parked)
+}
+
+func park(t *testing.T, id int64, at time.Time) {
+	t.Helper()
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET failed_at = $2 WHERE id = $1`, id, at)
+	require.NoError(t, err)
+}
+
+func TestPrunerKeepsAParkedRowForItsOwnWindow(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	fresh := insertPending(t, TransportKafka, "file-fresh", 0, now)
+	stale := insertPending(t, TransportKafka, "file-stale", 0, now)
+
+	park(t, fresh, now.Add(-100*time.Hour))
+	park(t, stale, now.Add(-800*time.Hour))
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed.Parked)
+	assert.Zero(t, removed.Published)
+
+	assert.False(t, rowExists(t, stale))
+	assert.True(t, rowExists(t, fresh),
+		"a parked row is an incident somebody has to read, so it outlives a published one")
+}
+
+func TestPrunerDrainsParkedRowsInBatches(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	for n := range 5 {
+		park(t, insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now),
+			now.Add(-800*time.Hour))
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	again, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, int64(5), removed.Parked,
+		"the dead letter table grows forever if a pass stops after one batch")
+	assert.Zero(t, again.Parked)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM outbox`).Scan(&left))
+	assert.Zero(t, left)
+}
+
+func TestPrunerLeavesAParkedRowAlonePastThePublishedWindow(t *testing.T) {
+	// Arrange: older than the published retention, younger than the parked one.
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	parked := insertPending(t, TransportKafka, "file-parked", 0, now)
+	park(t, parked, now.Add(-100*time.Hour))
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Zero(t, removed.Published,
+		"the published window must not reach a row that was never published")
+	assert.Zero(t, removed.Parked)
+	assert.True(t, rowExists(t, parked))
 }

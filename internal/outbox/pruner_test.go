@@ -29,6 +29,10 @@ func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
 			mutate: func(c *PrunerConfig) { c.Retention = 0 },
 		},
 		{
+			name: "zero parked retention", db: db, clock: clock.System{},
+			mutate: func(c *PrunerConfig) { c.ParkedRetention = 0 },
+		},
+		{
 			name: "zero batch size", db: db, clock: clock.System{},
 			mutate: func(c *PrunerConfig) { c.BatchSize = 0 },
 		},
@@ -38,7 +42,9 @@ func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := PrunerConfig{Retention: time.Hour, BatchSize: 10}
+			cfg := PrunerConfig{
+				Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 10,
+			}
 			if test.mutate != nil {
 				test.mutate(&cfg)
 			}

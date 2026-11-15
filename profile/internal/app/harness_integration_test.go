@@ -245,7 +245,9 @@ func workerConfig(t *testing.T) config.Worker {
 			FailStuckAfter:    30 * time.Minute,
 			PruneInterval:     time.Hour,
 		},
-		OutboxPrune: outbox.PrunerConfig{Retention: time.Hour, BatchSize: 100},
-		InboxPrune:  inbox.PrunerConfig{Retention: time.Hour, BatchSize: 100},
+		OutboxPrune: outbox.PrunerConfig{
+			Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+		},
+		InboxPrune: inbox.PrunerConfig{Retention: time.Hour, BatchSize: 100},
 	}
 }
