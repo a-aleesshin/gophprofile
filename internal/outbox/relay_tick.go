@@ -75,18 +75,30 @@ func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
 
 	err := r.db.InTx(ctx, func(ctx context.Context) error {
 		rows, err := r.db.Querier(ctx).Query(ctx, `
-			SELECT id, destination, partition_key, message_type, payload,
-				attempts, available_at, created_at
-			  FROM outbox
-			 WHERE transport = $1 AND published_at IS NULL AND failed_at IS NULL
-			 ORDER BY id
-			 LIMIT $2
-			   FOR UPDATE SKIP LOCKED`, r.transport, r.cfg.BatchSize)
+			SELECT o.id, o.destination, o.partition_key, o.message_type, o.payload,
+				o.attempts, o.available_at, o.created_at
+			  FROM outbox AS o
+			 WHERE o.transport = $1
+			   AND o.published_at IS NULL
+			   AND o.failed_at IS NULL
+			   AND o.available_at <= $2
+			   AND (o.partition_key IS NULL OR NOT EXISTS (
+					SELECT 1
+					  FROM outbox AS ahead
+					 WHERE ahead.transport = o.transport
+					   AND ahead.partition_key = o.partition_key
+					   AND ahead.published_at IS NULL
+					   AND ahead.failed_at IS NULL
+					   AND ahead.id < o.id
+					   AND ahead.available_at > $2))
+			 ORDER BY o.id
+			 LIMIT $3
+			   FOR UPDATE SKIP LOCKED`, r.transport, now, r.cfg.BatchSize)
 		if err != nil {
 			return fmt.Errorf("select outbox batch: %w", err)
 		}
 
-		pending, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (claimed, error) {
+		eligible, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (claimed, error) {
 			var (
 				message claimed
 				key     *string
@@ -108,25 +120,6 @@ func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
 		})
 		if err != nil {
 			return fmt.Errorf("read outbox batch: %w", err)
-		}
-
-		blocked := make(map[string]struct{}, len(pending))
-		eligible = make([]claimed, 0, len(pending))
-
-		for _, message := range pending {
-			scope := scopeOf(message)
-
-			if _, stop := blocked[scope]; stop {
-				continue
-			}
-
-			if message.availableAt.After(now) {
-				blocked[scope] = struct{}{}
-
-				continue
-			}
-
-			eligible = append(eligible, message)
 		}
 
 		if len(eligible) == 0 {

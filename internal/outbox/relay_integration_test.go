@@ -529,6 +529,104 @@ func TestRelayDoesNotLetLaterMessagesOvertakeAStalledOne(t *testing.T) {
 	assert.Zero(t, readRow(t, second).Attempts)
 }
 
+func TestRelayDoesNotSpendTheBatchOnAStalledScope(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+
+	stalled := insertPending(t, TransportKafka, "file-1", 0, now.Add(time.Minute))
+	behind := insertPending(t, TransportKafka, "file-1", 0, due)
+	other := insertPending(t, TransportKafka, "file-2", 0, due)
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, func(c *RelayConfig) { c.BatchSize = 2 })
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 1}, stats,
+		"a scope that cannot move must not consume the window of a scope that can")
+	require.Len(t, sender.sent, 1)
+	assert.Equal(t, other, sender.sent[0].ID)
+
+	assert.Nil(t, readRow(t, stalled).PublishedAt)
+	assert.Nil(t, readRow(t, behind).PublishedAt)
+	assert.Equal(t, due, readRow(t, behind).AvailableAt.UTC(),
+		"a row that was never a candidate must not be leased")
+}
+
+func TestRelayFillsTheBatchPastManyStalledScopes(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+	later := now.Add(time.Minute)
+
+	const stalledScopes = 8
+
+	for i := range stalledScopes {
+		key := fmt.Sprintf("stalled-%d", i)
+		insertPending(t, TransportKafka, key, 0, later)
+		insertPending(t, TransportKafka, key, 0, due)
+	}
+
+	ready := make([]int64, 0, 3)
+	for i := range 3 {
+		ready = append(ready,
+			insertPending(t, TransportKafka, fmt.Sprintf("ready-%d", i), 0, due))
+	}
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, func(c *RelayConfig) { c.BatchSize = 3 })
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 3}, stats,
+		"sixteen rows that cannot move sit ahead of these three and must not hide them")
+
+	sent := make([]int64, 0, len(sender.sent))
+	for _, message := range sender.sent {
+		sent = append(sent, message.ID)
+	}
+
+	assert.Equal(t, ready, sent)
+}
+
+func TestRelayTreatsEveryKeylessRowAsItsOwnScope(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+
+	stalled := insertPending(t, TransportKafka, "", 0, now.Add(time.Minute))
+	first := insertPending(t, TransportKafka, "", 0, due)
+	second := insertPending(t, TransportKafka, "", 0, due)
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 2}, stats,
+		"a row with no partition key orders against nothing, so it blocks nothing")
+	require.Len(t, sender.sent, 2)
+	assert.Equal(t, []int64{first, second},
+		[]int64{sender.sent[0].ID, sender.sent[1].ID})
+	assert.Nil(t, readRow(t, stalled).PublishedAt)
+}
+
 func TestRelayResumesTheQueueOnceTheBackoffHasElapsed(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
