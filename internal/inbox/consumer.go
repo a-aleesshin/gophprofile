@@ -35,21 +35,37 @@ type Source interface {
 	Fetch(ctx context.Context) ([]Delivery, error)
 }
 
+type Run func(ctx context.Context, message outbox.Envelope) error
+
+type RunSettling func(ctx context.Context, message outbox.Envelope) (func(), error)
+
 type Handler struct {
-	run           func(ctx context.Context, message outbox.Envelope) error
+	run           RunSettling
 	transactional bool
 }
 
 func (h Handler) Run(ctx context.Context, message outbox.Envelope) error {
-	return h.run(ctx, message)
+	_, err := h.run(ctx, message)
+
+	return err
 }
 
-func Repeatable(run func(ctx context.Context, message outbox.Envelope) error) Handler {
-	return Handler{run: run}
+func Repeatable(run Run) Handler {
+	return Handler{run: settlingNothing(run)}
 }
 
-func Transactional(run func(ctx context.Context, message outbox.Envelope) error) Handler {
+func Transactional(run Run) Handler {
+	return Handler{run: settlingNothing(run), transactional: true}
+}
+
+func TransactionalSettling(run RunSettling) Handler {
 	return Handler{run: run, transactional: true}
+}
+
+func settlingNothing(run Run) RunSettling {
+	return func(ctx context.Context, message outbox.Envelope) (func(), error) {
+		return nil, run(ctx, message)
+	}
 }
 
 type ConsumerConfig struct {
@@ -162,7 +178,15 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 			continue
 		}
 
-		effect := func(ctx context.Context) error { return handler.run(ctx, envelope) }
+		var settled func()
+
+		effect := func(ctx context.Context) error {
+			var runErr error
+
+			settled, runErr = handler.run(ctx, envelope)
+
+			return runErr
+		}
 
 		var (
 			applied bool
@@ -182,6 +206,10 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 		} else {
 			applied, err = c.inbox.OnceOutsideTransaction(
 				handled, c.name, envelope.MessageID, effect)
+		}
+
+		if applied && err == nil && settled != nil {
+			settled()
 		}
 
 		if span.IsRecording() {
