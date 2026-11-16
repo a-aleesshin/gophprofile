@@ -18,3 +18,21 @@ datasources:
     uid: jaeger
     access: proxy
     url: http://jaeger:16686
+
+  - name: OpenSearch
+    type: grafana-opensearch-datasource
+    uid: opensearch
+    access: proxy
+    url: http://opensearch:9200
+    jsonData:
+      database: gophprofile-logs-*
+      flavor: opensearch
+      version: 2.19.0
+      timeField: "@timestamp"
+      logMessageField: msg
+      logLevelField: level
+      pplEnabled: true
+      dataLinks:
+        - field: trace_id
+          datasourceUid: jaeger
+          url: "${__value.raw}"
