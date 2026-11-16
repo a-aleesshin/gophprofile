@@ -198,3 +198,146 @@ func TestNothingParkedCreatesNoSeries(t *testing.T) {
 	// Assert
 	assert.Equal(t, 0, testutil.CollectAndCount(outboxParked))
 }
+
+func TestAvatarUploadCountsAndTimesByOutcome(t *testing.T) {
+	// Arrange
+	avatarUploads.Reset()
+	avatarUploadDuration.Reset()
+
+	// Act
+	ObserveAvatarUpload("ready", 3*time.Second)
+	ObserveAvatarUpload("ready", 5*time.Second)
+	ObserveAvatarUpload("failed", time.Second)
+
+	// Assert
+	assert.InDelta(t, 2, testutil.ToFloat64(avatarUploads.WithLabelValues("ready")), 0.001)
+	assert.InDelta(t, 1, testutil.ToFloat64(avatarUploads.WithLabelValues("failed")), 0.001,
+		"a failed upload is a business outcome, not an absence of one")
+
+	assert.Equal(t, 2, testutil.CollectAndCount(avatarUploadDuration),
+		"one histogram per outcome, so a slow failure does not hide inside the successes")
+}
+
+func TestFileCountsForgetAStatusThatIsGone(t *testing.T) {
+	// Arrange
+	SetFileCounts([]FileCount{{Status: "processing", Count: 4}, {Status: "ready", Count: 9}})
+	require.InDelta(t, 4, testutil.ToFloat64(files.WithLabelValues("processing")), 0.001)
+
+	// Act
+	SetFileCounts([]FileCount{{Status: "ready", Count: 9}})
+
+	// Assert
+	assert.Equal(t, 1, testutil.CollectAndCount(files),
+		"a gauge that keeps a stale series reports four files stuck in processing forever")
+	assert.InDelta(t, 9, testutil.ToFloat64(files.WithLabelValues("ready")), 0.001)
+}
+
+func TestStorageUsageSplitsOriginalsFromVariants(t *testing.T) {
+	// Arrange
+	storageBytes.Reset()
+	storageObjects.Reset()
+
+	// Act
+	SetStorageUsage([]StorageUsage{
+		{Kind: "original", Bytes: 173402, Objects: 8},
+		{Kind: "variant", Bytes: 222863, Objects: 24},
+	})
+
+	// Assert
+	assert.InDelta(t, 173402, testutil.ToFloat64(storageBytes.WithLabelValues("original")), 1)
+	assert.InDelta(t, 24, testutil.ToFloat64(storageObjects.WithLabelValues("variant")), 1,
+		"variants are the bulk of what is stored, so they have to be visible apart")
+}
+
+func TestOutboxDepthReportsPendingAndParkedApart(t *testing.T) {
+	// Arrange
+	outboxDepth.Reset()
+
+	// Act
+	SetOutboxDepth("kafka", 12, 3)
+
+	// Assert
+	assert.InDelta(t, 12, testutil.ToFloat64(outboxDepth.WithLabelValues("kafka", "pending")), 0.001)
+	assert.InDelta(t, 3, testutil.ToFloat64(outboxDepth.WithLabelValues("kafka", "parked")), 0.001,
+		"a parked row is not waiting for anything, so counting it as pending would hide the real queue")
+}
+
+func TestRegisterPoolExposesWhatTheReaderReports(t *testing.T) {
+	// Arrange
+	stats := PoolStats{Acquired: 3, Idle: 2, Total: 5, Max: 10, EmptyAcquires: 7}
+
+	// Act
+	require.NoError(t, RegisterPool("test-pool", func() PoolStats { return stats }))
+
+	// Assert
+	gathered, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+
+	found := map[string]float64{}
+
+	for _, family := range gathered {
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+
+			if labels["pool"] != "test-pool" {
+				continue
+			}
+
+			key := family.GetName()
+			if state, tagged := labels["state"]; tagged {
+				key += "/" + state
+			}
+
+			if gauge := metric.GetGauge(); gauge != nil {
+				found[key] = gauge.GetValue()
+			}
+
+			if counter := metric.GetCounter(); counter != nil {
+				found[key] = counter.GetValue()
+			}
+		}
+	}
+
+	assert.InDelta(t, 3, found["gophprofile_db_pool_connections/acquired"], 0.001)
+	assert.InDelta(t, 2, found["gophprofile_db_pool_connections/idle"], 0.001)
+	assert.InDelta(t, 10, found["gophprofile_db_pool_connections_max"], 0.001)
+	assert.InDelta(t, 7, found["gophprofile_db_pool_empty_acquires_total"], 0.001,
+		"an empty acquire is a caller that waited, which is the first sign max conns is too low")
+}
+
+func TestRegisterPoolTakesAnAlreadyRegisteredPoolForDone(t *testing.T) {
+	// Arrange
+	read := func() PoolStats { return PoolStats{} }
+	require.NoError(t, RegisterPool("twice", read))
+
+	// Act
+	err := RegisterPool("twice", read)
+
+	// Assert
+	require.NoError(t, err,
+		"the registry is process wide and the integration harnesses build the app several "+
+			"times, so a second registration is work already done, not a failure")
+}
+
+func TestRegisterPoolRefusesABrokenCall(t *testing.T) {
+	require.ErrorIs(t, RegisterPool("", func() PoolStats { return PoolStats{} }), ErrInvalidPool)
+	require.ErrorIs(t, RegisterPool("named", nil), ErrInvalidPool)
+}
+
+func TestConsumerLagIsKeptPerTopic(t *testing.T) {
+	// Arrange
+	consumerLag.Reset()
+
+	// Act
+	SetConsumerLag("file", "gophprofile.profile.v1", 42)
+	SetConsumerLag("file", "other.topic", 0)
+
+	// Assert
+	assert.InDelta(t, 42,
+		testutil.ToFloat64(consumerLag.WithLabelValues("file", "gophprofile.profile.v1")), 0.001)
+	assert.InDelta(t, 0,
+		testutil.ToFloat64(consumerLag.WithLabelValues("file", "other.topic")), 0.001)
+}

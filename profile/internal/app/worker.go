@@ -10,6 +10,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -27,6 +28,7 @@ const (
 	jobRecover     = "recover-stale-uploads"
 	jobFailStuck   = "fail-stuck-avatars"
 	jobBacklog     = "observe-outbox-backlog"
+	jobLag         = "observe-consumer-lag"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
 )
@@ -65,6 +67,20 @@ func BuildWorker(
 	}
 
 	closers = append(closers, pool.Close)
+
+	if err := metrics.RegisterPool("postgres", func() metrics.PoolStats {
+		stat := pool.Stat()
+
+		return metrics.PoolStats{
+			Acquired:      stat.AcquiredConns(),
+			Idle:          stat.IdleConns(),
+			Total:         stat.TotalConns(),
+			Max:           stat.MaxConns(),
+			EmptyAcquires: stat.EmptyAcquireCount(),
+		}
+	}); err != nil {
+		return fail(fmt.Errorf("observe the postgres pool: %w", err))
+	}
 
 	db := pgtx.New(pool)
 
@@ -230,6 +246,11 @@ func BuildWorker(
 		return fail(fmt.Errorf("build metrics server: %w", err))
 	}
 
+	lagJob, err := worker.Every(jobLag, cfg.Jobs.BacklogInterval, logger, source.ObserveLag)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobLag, err))
+	}
+
 	runner := worker.New().
 		Add("kafka relay", relay).
 		Add("fact consumer", consumer).
@@ -238,6 +259,7 @@ func BuildWorker(
 		Add(jobFailStuck, failStuckJob).
 		Add(jobPruneOutbox, pruneOutboxJob).
 		Add(jobPruneInbox, pruneInboxJob).
+		Add(jobLag, lagJob).
 		Add("health server", healthServer).
 		Add("metrics server", metricsServer)
 

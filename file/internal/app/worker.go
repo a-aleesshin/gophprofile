@@ -20,6 +20,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -34,6 +35,8 @@ const (
 	jobBacklog     = "observe-outbox-backlog"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
+	jobStorage     = "observe-storage"
+	jobLag         = "observe-consumer-lag"
 )
 
 type Closer func()
@@ -72,6 +75,20 @@ func BuildWorker(
 	}
 
 	closers = append(closers, pool.Close)
+
+	if err := metrics.RegisterPool("postgres", func() metrics.PoolStats {
+		stat := pool.Stat()
+
+		return metrics.PoolStats{
+			Acquired:      stat.AcquiredConns(),
+			Idle:          stat.IdleConns(),
+			Total:         stat.TotalConns(),
+			Max:           stat.MaxConns(),
+			EmptyAcquires: stat.EmptyAcquireCount(),
+		}
+	}); err != nil {
+		return fail(fmt.Errorf("observe the postgres pool: %w", err))
+	}
 
 	db := pgtx.New(pool)
 
@@ -168,6 +185,11 @@ func BuildWorker(
 		messaging.FactHandlers(deleteFile), cfg.Inbox.MaxAttempts)
 	if err != nil {
 		return fail(fmt.Errorf("build fact consumer: %w", err))
+	}
+
+	lagJob, err := worker.Every(jobLag, cfg.Jobs.BacklogInterval, logger, facts.ObserveLag)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobLag, err))
 	}
 
 	runner.Add("fact consumer", factConsumer)
@@ -284,6 +306,44 @@ func BuildWorker(
 		return fail(fmt.Errorf("build %s: %w", jobPruneOutbox, err))
 	}
 
+	observeStorage, err := usecase.NewObserveStorageHandler(files)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobStorage, err))
+	}
+
+	storageJob, err := worker.Every(jobStorage, cfg.Jobs.BacklogInterval, logger,
+		func(ctx context.Context) error {
+			result, err := observeStorage.Handle(ctx)
+			if err != nil {
+				return err
+			}
+
+			usage := make([]metrics.StorageUsage, 0, len(result.Usage))
+			for _, entry := range result.Usage {
+				usage = append(usage, metrics.StorageUsage{
+					Kind:    entry.Kind,
+					Bytes:   entry.Bytes,
+					Objects: entry.Objects,
+				})
+			}
+
+			counts := make([]metrics.FileCount, 0, len(result.Counts))
+			for _, entry := range result.Counts {
+				counts = append(counts, metrics.FileCount{
+					Status: entry.Status,
+					Count:  entry.Count,
+				})
+			}
+
+			metrics.SetStorageUsage(usage)
+			metrics.SetFileCounts(counts)
+
+			return nil
+		})
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobStorage, err))
+	}
+
 	pruneInboxJob, err := worker.Every(jobPruneInbox, cfg.Jobs.PruneInterval, logger,
 		func(ctx context.Context) error {
 			removed, err := inboxPruner.Prune(ctx)
@@ -310,7 +370,9 @@ func BuildWorker(
 		Add(jobReconcile, reconcileJob).
 		Add(jobReap, reapJob).
 		Add(jobPruneOutbox, pruneOutboxJob).
-		Add(jobPruneInbox, pruneInboxJob)
+		Add(jobPruneInbox, pruneInboxJob).
+		Add(jobStorage, storageJob).
+		Add(jobLag, lagJob)
 
 	checks, err := health.New(cfg.Health,
 		health.Check{Name: "postgres", Critical: true, Probe: pool.Ping},

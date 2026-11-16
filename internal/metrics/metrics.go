@@ -41,6 +41,18 @@ var (
 		Help:      "Age of the oldest row the relay has not published yet.",
 	}, []string{"transport"})
 
+	consumerLag = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "kafka_consumer_lag",
+		Help:      "Records a consumer group has not read yet, by group and topic.",
+	}, []string{"group", "topic"})
+
+	outboxDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "outbox_depth",
+		Help:      "Rows waiting to be published, by transport and state.",
+	}, []string{"transport", "state"})
+
 	inboxMessages = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "inbox_messages_total",
@@ -65,6 +77,37 @@ var (
 		Name:      "grpc_requests_total",
 		Help:      "Calls served, by kind, method and code.",
 	}, []string{"kind", "method", "code"})
+
+	avatarUploads = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "avatar_uploads_total",
+		Help:      "Avatars that reached a terminal state, by outcome.",
+	}, []string{"status"})
+
+	avatarUploadDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "avatar_upload_duration_seconds",
+		Help:      "How long an avatar took from the request to its terminal state.",
+		Buckets:   []float64{0.5, 1, 2, 5, 10, 30, 60, 300},
+	}, []string{"status"})
+
+	storageBytes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "storage_bytes",
+		Help:      "Bytes the service keeps in object storage, by kind.",
+	}, []string{"kind"})
+
+	storageObjects = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "storage_objects",
+		Help:      "Objects the service keeps in object storage, by kind.",
+	}, []string{"kind"})
+
+	files = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "files",
+		Help:      "Files the service knows about, by status.",
+	}, []string{"status"})
 
 	grpcDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: namespace,
@@ -107,6 +150,15 @@ func SetOutboxBacklogAge(transport string, age time.Duration) {
 	outboxBacklogAge.WithLabelValues(transport).Set(age.Seconds())
 }
 
+func SetConsumerLag(group, topic string, lag int64) {
+	consumerLag.WithLabelValues(group, topic).Set(float64(lag))
+}
+
+func SetOutboxDepth(transport string, pending, parked int64) {
+	outboxDepth.WithLabelValues(transport, "pending").Set(float64(pending))
+	outboxDepth.WithLabelValues(transport, "parked").Set(float64(parked))
+}
+
 func ObserveInbox(consumer string, handled, duplicate, retried, dropped, exhausted int) {
 	for outcome, count := range map[string]int{
 		OutcomeHandled:   handled,
@@ -118,6 +170,37 @@ func ObserveInbox(consumer string, handled, duplicate, retried, dropped, exhaust
 		if count > 0 {
 			inboxMessages.WithLabelValues(consumer, outcome).Add(float64(count))
 		}
+	}
+}
+
+func ObserveAvatarUpload(status string, took time.Duration) {
+	avatarUploads.WithLabelValues(status).Inc()
+	avatarUploadDuration.WithLabelValues(status).Observe(took.Seconds())
+}
+
+type StorageUsage struct {
+	Kind    string
+	Bytes   int64
+	Objects int64
+}
+
+func SetStorageUsage(usage []StorageUsage) {
+	for _, entry := range usage {
+		storageBytes.WithLabelValues(entry.Kind).Set(float64(entry.Bytes))
+		storageObjects.WithLabelValues(entry.Kind).Set(float64(entry.Objects))
+	}
+}
+
+type FileCount struct {
+	Status string
+	Count  int64
+}
+
+func SetFileCounts(counts []FileCount) {
+	files.Reset()
+
+	for _, entry := range counts {
+		files.WithLabelValues(entry.Status).Set(float64(entry.Count))
 	}
 }
 
@@ -133,6 +216,10 @@ func ObserveHTTPRequest(route, method string, status int, took time.Duration) {
 func ObserveGRPCCall(kind, method, code string, took time.Duration) {
 	grpcRequests.WithLabelValues(kind, method, code).Inc()
 	grpcDuration.WithLabelValues(kind, method).Observe(took.Seconds())
+}
+
+func ConsumerLagForTest(group, topic string) prometheus.Gauge {
+	return consumerLag.WithLabelValues(group, topic)
 }
 
 // BacklogAgeForTest exposes the gauge so the relay's own integration test can

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
@@ -128,11 +129,13 @@ func FactHandlers(
 						inbox.ErrUnprocessable, message.Type)
 				}
 
-				_, err = processed.Handle(ctx, usecase.FileProcessedFact{
+				result, err := processed.Handle(ctx, usecase.FileProcessedFact{
 					FileID:   fileID,
 					Snapshot: snapshot,
 					Variants: variants,
 				})
+
+				observeUpload(result, err)
 
 				return unprocessableIfPermanent(err)
 			}),
@@ -156,10 +159,12 @@ func FactHandlers(
 						inbox.ErrUnprocessable, message.Type)
 				}
 
-				_, err = rejected.Handle(ctx, usecase.FileRejectedFact{
+				result, err := rejected.Handle(ctx, usecase.FileRejectedFact{
 					FileID: fileID,
 					Reason: data.Reason,
 				})
+
+				observeUpload(result, err)
 
 				return unprocessableIfPermanent(err)
 			}),
@@ -183,6 +188,14 @@ func FactHandlers(
 				return unprocessableIfPermanent(err)
 			}),
 	}
+}
+
+func observeUpload(result usecase.ApplyFactResult, err error) {
+	if err != nil || result.Skipped || result.Status.IsZero() {
+		return
+	}
+
+	metrics.ObserveAvatarUpload(result.Status.String(), result.Took)
 }
 
 func unprocessableIfPermanent(err error) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 )
@@ -22,6 +23,7 @@ type FileProcessedFact struct {
 
 type ApplyFactResult struct {
 	Status   domain.AvatarStatus
+	Took     time.Duration
 	Skipped  bool
 	Promoted bool
 }
@@ -108,7 +110,11 @@ func (h *ApplyFileProcessedHandler) Handle(
 		return ApplyFactResult{}, err
 	}
 
-	return ApplyFactResult{Status: avatar.Status(), Promoted: promote}, nil
+	return ApplyFactResult{
+		Status:   avatar.Status(),
+		Took:     now.Sub(avatar.CreatedAt()),
+		Promoted: promote,
+	}, nil
 }
 
 func (h *ApplyFileProcessedHandler) promotes(

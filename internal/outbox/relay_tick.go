@@ -420,26 +420,31 @@ func (r *Relay) Run(ctx context.Context) error {
 // anything never reaches the end of a tick, and that is exactly the state the
 // gauge has to describe.
 func (r *Relay) ObserveBacklog(ctx context.Context) error {
-	var oldest time.Time
+	var (
+		oldest  *time.Time
+		pending int64
+		parked  int64
+	)
 
 	err := r.db.Querier(ctx).QueryRow(ctx, `
-		SELECT created_at
+		SELECT min(created_at) FILTER (WHERE published_at IS NULL AND failed_at IS NULL),
+		       count(*) FILTER (WHERE published_at IS NULL AND failed_at IS NULL),
+		       count(*) FILTER (WHERE failed_at IS NOT NULL)
 		  FROM outbox
-		 WHERE transport = $1 AND published_at IS NULL AND failed_at IS NULL
-		 ORDER BY id
-		 LIMIT 1`, r.transport).Scan(&oldest)
+		 WHERE transport = $1`, r.transport).Scan(&oldest, &pending, &parked)
+	if err != nil {
+		return fmt.Errorf("select the %s backlog: %w", r.transport, err)
+	}
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	metrics.SetOutboxDepth(r.transport, pending, parked)
+
+	if oldest == nil {
 		metrics.SetOutboxBacklogAge(r.transport, 0)
 
 		return nil
 	}
 
-	if err != nil {
-		return fmt.Errorf("select oldest unpublished %s row: %w", r.transport, err)
-	}
-
-	age := r.clock.Now().Sub(oldest)
+	age := r.clock.Now().Sub(*oldest)
 	if age < 0 {
 		age = 0
 	}

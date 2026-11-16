@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: gophprofile
+    static_configs:
+      - targets:
+          - file-server:9100
+          - file-worker:9100
+        labels:
+          service: file
+      - targets:
+          - profile-server:9100
+          - profile-worker:9100
+        labels:
+          service: profile
