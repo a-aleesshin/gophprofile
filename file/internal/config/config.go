@@ -36,6 +36,7 @@ type Jobs struct {
 	ReapLimit         int           `env:"REAP_LIMIT" envDefault:"100"`
 	ReapStaleAfter    time.Duration `env:"REAP_STALE_AFTER" envDefault:"15m"`
 	BacklogInterval   time.Duration `env:"BACKLOG_INTERVAL" envDefault:"15s"`
+	StorageInterval   time.Duration `env:"STORAGE_INTERVAL" envDefault:"2m"`
 	PruneInterval     time.Duration `env:"PRUNE_INTERVAL" envDefault:"1h"`
 }
 

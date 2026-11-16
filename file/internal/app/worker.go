@@ -311,7 +311,7 @@ func BuildWorker(
 		return fail(fmt.Errorf("build %s: %w", jobStorage, err))
 	}
 
-	storageJob, err := worker.Every(jobStorage, cfg.Jobs.BacklogInterval, logger,
+	storageJob, err := worker.Every(jobStorage, cfg.Jobs.StorageInterval, logger,
 		func(ctx context.Context) error {
 			result, err := observeStorage.Handle(ctx)
 			if err != nil {
