@@ -13,6 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 )
@@ -501,4 +506,132 @@ func TestConsumerStillDropsWhatCanNeverBeProcessed(t *testing.T) {
 	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
 		`SELECT count(*) FROM failed_messages WHERE message_id = $1`, id).Scan(&rows))
 	assert.Zero(t, rows)
+}
+
+func tracedEnvelopeBody(t *testing.T, id uuid.UUID, producer trace.SpanContext) []byte {
+	t.Helper()
+
+	carrier := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(
+		trace.ContextWithSpanContext(context.Background(), producer), carrier)
+
+	body, err := json.Marshal(outbox.Envelope{
+		MessageID:  id,
+		Type:       "ProcessFile",
+		OccurredAt: time.Now().UTC(),
+		Trace:      carrier,
+		Data:       json.RawMessage(`{"file_id":"x"}`),
+	})
+	require.NoError(t, err)
+
+	return body
+}
+
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	return recorder
+}
+
+func TestProcessingLinksBackToTheProducer(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	producer := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{7, 7, 7, 7, 6, 6, 6, 6, 5, 5, 5, 5, 4, 4, 4, 4},
+		SpanID:     trace.SpanID{3, 3, 3, 3, 2, 2, 2, 2},
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+
+	id := uuid.New()
+	delivery := &fakeDelivery{body: tracedEnvelopeBody(t, id, producer)}
+
+	var inside trace.SpanContext
+
+	consumer, _ := testConsumer(t, func(ctx context.Context, _ outbox.Envelope) error {
+		inside = trace.SpanFromContext(ctx).SpanContext()
+
+		return nil
+	}, delivery)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Handled)
+
+	var handled sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.SpanKind() == trace.SpanKindConsumer {
+			handled = span
+
+			break
+		}
+	}
+
+	require.NotNil(t, handled)
+	assert.Equal(t, "process ProcessFile", handled.Name())
+
+	assert.NotEqual(t, producer.TraceID(), handled.SpanContext().TraceID(),
+		"a message may wait minutes for the relay, so hanging it under the request "+
+			"would stretch that trace over the whole wait")
+
+	require.Len(t, handled.Links(), 1,
+		"without the link there is no way back from the work to the request that caused it")
+	assert.Equal(t, producer.TraceID(), handled.Links()[0].SpanContext.TraceID())
+	assert.Equal(t, producer.SpanID(), handled.Links()[0].SpanContext.SpanID())
+
+	assert.Equal(t, handled.SpanContext().TraceID(), inside.TraceID(),
+		"whatever the handler does has to land in the same trace as the processing span")
+}
+
+func TestProcessingSpanCarriesTheOutcome(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	boom := errors.New("constraint violated")
+	delivery := &fakeDelivery{body: envelopeBody(t, uuid.New(), "ProcessFile")}
+
+	consumer, _ := testConsumer(t,
+		func(context.Context, outbox.Envelope) error { return boom }, delivery)
+
+	// Act
+	_, err := consumer.Consume(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	var handled sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.SpanKind() == trace.SpanKindConsumer {
+			handled = span
+
+			break
+		}
+	}
+
+	require.NotNil(t, handled)
+	assert.Equal(t, "Error", handled.Status().Code.String())
+	assert.NotEmpty(t, handled.Events())
+	assert.Empty(t, handled.Links(),
+		"an untraced message produces no link, and no link to nowhere either")
 }

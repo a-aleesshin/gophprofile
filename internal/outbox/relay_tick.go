@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
@@ -37,7 +41,29 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 		return RelayStats{}, nil
 	}
 
-	published, failures, sendErr := r.publish(ctx, leased)
+	publishCtx, span := r.tracer.Start(ctx, "outbox publish "+r.transport,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			messagingSystem(r.transport),
+			semconv.MessagingOperationTypeSend,
+			semconv.MessagingBatchMessageCount(len(leased)),
+		))
+
+	published, failures, sendErr := r.publish(publishCtx, leased)
+
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Int("messaging.published", len(published)),
+			attribute.Int("messaging.failed", len(failures)),
+		)
+
+		if sendErr != nil {
+			span.RecordError(sendErr)
+			span.SetStatus(codes.Error, sendErr.Error())
+		}
+	}
+
+	span.End()
 
 	untouched := untouchedOf(leased, published, failures)
 

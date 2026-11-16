@@ -4,8 +4,10 @@ package outbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"log/slog"
 	"os"
 	"testing"
@@ -15,6 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/file/migrations"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -1483,4 +1490,121 @@ func TestPrunerLeavesAParkedRowAlonePastThePublishedWindow(t *testing.T) {
 		"the published window must not reach a row that was never published")
 	assert.Zero(t, removed.Parked)
 	assert.True(t, rowExists(t, parked))
+}
+
+func TestWriteStoresTheTraceOfItsCaller(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	provider := sdktrace.NewTracerProvider()
+
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	ctx, span := provider.Tracer("test").Start(t.Context(), "request")
+
+	writer := NewWriter(sharedDB, clock.System{})
+
+	// Act
+	require.NoError(t, writer.Write(ctx, Message{
+		Transport:    TransportKafka,
+		Destination:  "gophprofile.file.v1",
+		PartitionKey: "file-1",
+		Type:         "FileProcessed",
+		Data:         map[string]string{"file_id": "x"},
+	}))
+
+	span.End()
+
+	// Assert
+	var payload []byte
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT payload FROM outbox ORDER BY id DESC LIMIT 1`).Scan(&payload))
+
+	var envelope Envelope
+	require.NoError(t, json.Unmarshal(payload, &envelope))
+
+	require.Contains(t, envelope.Trace, "traceparent",
+		"the row outlives the request, so the only place the cause can survive is the payload")
+	assert.Contains(t, envelope.Trace["traceparent"],
+		span.SpanContext().TraceID().String())
+
+	links := envelope.Links()
+	require.Len(t, links, 1)
+	assert.Equal(t, span.SpanContext().TraceID(), links[0].SpanContext.TraceID())
+}
+
+func TestATickThatPublishesGetsASpan(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	now := time.Now().UTC()
+	insertPending(t, TransportKafka, "file-1", 0, now.Add(-time.Minute))
+
+	relay := testRelay(t, TransportKafka, &recordingSender{}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Published)
+
+	// Assert
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+
+	assert.Equal(t, "outbox publish kafka", spans[0].Name())
+	assert.Equal(t, trace.SpanKindProducer, spans[0].SpanKind())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(spans[0].Attributes()))
+	for _, kv := range spans[0].Attributes() {
+		attributes[kv.Key] = kv.Value
+	}
+
+	assert.Equal(t, "kafka", attributes["messaging.system"].AsString())
+	assert.Equal(t, int64(1), attributes["messaging.batch.message_count"].AsInt64())
+	assert.Equal(t, int64(1), attributes["messaging.published"].AsInt64())
+}
+
+func TestAnIdleTickLeavesNoSpanBehind(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	relay := testRelay(t, TransportKafka, &recordingSender{}, time.Now().UTC(), nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Equal(t, RelayStats{}, stats)
+	assert.Empty(t, recorder.Ended(),
+		"the relay ticks on a timer, so an empty tick must not file a trace for nothing")
 }

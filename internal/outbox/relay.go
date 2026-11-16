@@ -8,7 +8,11 @@ import (
 	"time"
 
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const tracerName = "github.com/a-aleesshin/gophprofile/internal/outbox"
 
 var (
 	ErrInvalidRelayConfig = errors.New("invalid relay config")
@@ -62,6 +66,7 @@ type Relay struct {
 	sender    Sender
 	clock     Clock
 	logger    *slog.Logger
+	tracer    trace.Tracer
 	cfg       RelayConfig
 }
 
@@ -107,6 +112,7 @@ func NewRelay(
 		sender:    sender,
 		clock:     clock,
 		logger:    logger,
+		tracer:    otel.Tracer(tracerName),
 		cfg:       cfg,
 	}, nil
 }

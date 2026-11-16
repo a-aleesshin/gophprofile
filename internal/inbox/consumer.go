@@ -7,10 +7,17 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 )
+
+const tracerName = "github.com/a-aleesshin/gophprofile/internal/inbox"
 
 var (
 	ErrInvalidConsumer = errors.New("invalid consumer")
@@ -62,6 +69,7 @@ type Consumer struct {
 	source      Source
 	inbox       *Inbox
 	handlers    map[string]Handler
+	tracer      trace.Tracer
 	maxAttempts int
 }
 
@@ -109,6 +117,7 @@ func NewConsumer(
 		source:      source,
 		inbox:       in,
 		handlers:    routes,
+		tracer:      otel.Tracer(tracerName),
 		maxAttempts: maxAttempts,
 	}, nil
 }
@@ -158,12 +167,32 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 			err     error
 		)
 
+		handled, span := c.tracer.Start(ctx, "process "+envelope.Type,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithLinks(envelope.Links()...),
+			trace.WithAttributes(
+				semconv.MessagingOperationTypeProcess,
+				semconv.MessagingDestinationName(c.name),
+				semconv.MessagingMessageID(envelope.MessageID.String()),
+			))
+
 		if handler.transactional {
-			applied, err = c.inbox.Once(ctx, c.name, envelope.MessageID, effect)
+			applied, err = c.inbox.Once(handled, c.name, envelope.MessageID, effect)
 		} else {
 			applied, err = c.inbox.OnceOutsideTransaction(
-				ctx, c.name, envelope.MessageID, effect)
+				handled, c.name, envelope.MessageID, effect)
 		}
+
+		if span.IsRecording() {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+
+			span.SetAttributes(attribute.Bool("inbox.applied", applied))
+		}
+
+		span.End()
 
 		if err != nil {
 			if ctx.Err() != nil {
