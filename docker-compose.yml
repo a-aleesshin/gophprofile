@@ -69,6 +69,7 @@ services:
         condition: service_healthy
     volumes:
       - ./deploy/fluent-bit:/fluent-bit/etc:ro
+      - fluent-bit:/var/lib/fluent-bit
     ports:
       - "${FLUENT_BIT_PORT:-24224}:24224"
     healthcheck:
@@ -153,7 +154,7 @@ services:
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana:/var/lib/grafana/data
+      - grafana:/var/lib/grafana
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     healthcheck:
@@ -481,6 +482,7 @@ services:
 
 volumes:
   alertmanager:
+  fluent-bit:
   opensearch:
   grafana:
   prometheus:

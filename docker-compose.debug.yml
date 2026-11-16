@@ -1,0 +1,22 @@
+name: gophprofile
+
+services:
+  file-server:
+    logging:
+      driver: json-file
+
+  file-worker:
+    logging:
+      driver: json-file
+
+  profile-server:
+    logging:
+      driver: json-file
+
+  profile-worker:
+    logging:
+      driver: json-file
+
+  nginx:
+    logging:
+      driver: json-file
