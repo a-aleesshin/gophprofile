@@ -1,28 +1,63 @@
 groups:
+  - name: gophprofile-availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job="gophprofile"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.instance }} не отвечает на скрейп'
+          description: >-
+            Процесс упал или не поднял порт метрик. Пока он молчит, остальные
+            правила про него ничего не скажут: серий просто нет, а отсутствие
+            серии ни одно сравнение не ловит.
+
   - name: gophprofile-red
     rules:
       - alert: HighErrorRate
         expr: |
-          (sum(rate(gophprofile_http_requests_total{status=~"5.."}[5m])) or vector(0))
-            / clamp_min(sum(rate(gophprofile_http_requests_total[5m])), 0.0001)
+          sum by (service) (rate(gophprofile_http_requests_total{status=~"5.."}[5m]))
+            / sum by (service) (rate(gophprofile_http_requests_total[5m]))
             > 0.05
+            and sum by (service) (rate(gophprofile_http_requests_total[5m])) > 0.05
         for: 1m
         labels:
           severity: warning
         annotations:
-          summary: Более 5% запросов отвечают 5xx
-          description: Доля 5xx за пять минут — {{ $value | humanizePercentage }}.
+          summary: Более 5% запросов в {{ $labels.service }} отвечают 5xx
+          description: >-
+            Доля 5xx за пять минут — {{ $value | humanizePercentage }}. Правило
+            молчит на трафике меньше пятнадцати запросов за пять минут: одна
+            ошибка в тишине даёт сто процентов и будит зря.
 
       - alert: HighResponseTime
         expr: |
-          histogram_quantile(0.95,
-            sum by (le) (rate(gophprofile_http_request_duration_seconds_bucket[5m]))) > 1
+          histogram_quantile(0.95, sum by (le) (
+            rate(gophprofile_http_request_duration_seconds_bucket{service="profile"}[5m])
+          )) > 1
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: p95 ответа превысил секунду
-          description: p95 сейчас {{ $value | humanizeDuration }}.
+          summary: p95 API превысил секунду
+          description: >-
+            p95 сейчас {{ $value | humanizeDuration }}. Выдача картинок сюда не
+            входит: она идёт своим правилом, где секунда — норма, а не отказ.
+
+      - alert: SlowContentDelivery
+        expr: |
+          histogram_quantile(0.95, sum by (le) (
+            rate(gophprofile_http_request_duration_seconds_bucket{service="file"}[5m])
+          )) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: p95 выдачи файлов превысил пять секунд
+          description: >-
+            p95 сейчас {{ $value | humanizeDuration }}. Смотреть кэш nginx и
+            задержку объектного хранилища, а не код сервиса.
 
   - name: gophprofile-delivery
     rules:
@@ -31,18 +66,21 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Релей сдался на сообщении в {{ $labels.transport }}
+          summary: >-
+            Релей {{ $labels.service }} сдался на сообщении в {{ $labels.transport }}
           description: >-
             Припаркованная строка не уедет сама: её разбирает человек.
             Идентификатор и причина — в логе по запросу msg:"parked an outbox row".
 
       - alert: OutboxBacklogGrowing
-        expr: max by (transport) (gophprofile_outbox_oldest_unpublished_age_seconds) > 300
+        expr: max by (service, transport) (gophprofile_outbox_oldest_unpublished_age_seconds) > 300
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: Самая старая неотправленная строка старше пяти минут в {{ $labels.transport }}
+          summary: >-
+            Строка старше пяти минут ждёт отправки в {{ $labels.transport }}
+            у {{ $labels.service }}
           description: >-
             Релей может молчать, ничем не падая, поэтому это единственная метрика,
             по которой видно остановку доставки.
@@ -52,11 +90,13 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Консьюмер {{ $labels.consumer }} отбросил сообщение, исчерпав попытки
+          summary: >-
+            Консьюмер {{ $labels.consumer }} в {{ $labels.service }} отбросил
+            сообщение, исчерпав попытки
           description: Факт потерян безвозвратно, причина в failed_messages.last_error.
 
       - alert: ConsumerLagGrowing
-        expr: max by (group) (gophprofile_kafka_consumer_lag) > 100
+        expr: max by (service, group) (gophprofile_kafka_consumer_lag) > 100
         for: 5m
         labels:
           severity: warning
@@ -71,16 +111,23 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: Запросы ждут свободного соединения к Postgres
+          summary: Запросы {{ $labels.service }} ждут свободного соединения к Postgres
           description: Прямой признак, что POSTGRES_MAX_CONNS мал для нагрузки.
 
+  - name: gophprofile-business
+    rules:
       - alert: AvatarUploadsFailing
         expr: |
-          (sum(rate(gophprofile_avatar_uploads_total{status="failed"}[15m])) or vector(0))
-            / clamp_min(sum(rate(gophprofile_avatar_uploads_total[15m])), 0.0001)
+          sum(increase(gophprofile_avatar_uploads_total{status="failed"}[15m]))
+            / sum(increase(gophprofile_avatar_uploads_total[15m]))
             > 0.1
+            and sum(increase(gophprofile_avatar_uploads_total[15m])) >= 3
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: Больше десятой части загрузок не доходит до ready
+          description: >-
+            Доля отказов за пятнадцать минут — {{ $value | humanizePercentage }}.
+            Нужно хотя бы три завершённые загрузки в окне, иначе одна неудача
+            в тишине читается как полный отказ сервиса.

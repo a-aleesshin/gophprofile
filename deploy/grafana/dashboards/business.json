@@ -79,7 +79,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "round(sum(increase(gophprofile_avatar_uploads_total{status=\"ready\"}[30m])))",
+          "expr": "round(sum(increase(gophprofile_avatar_uploads_total{service=~\"$service\",status=\"ready\"}[30m])))",
           "legendFormat": "ready",
           "range": true,
           "refId": "A"
@@ -149,7 +149,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "round(sum(increase(gophprofile_avatar_uploads_total{status=\"failed\"}[30m])) or vector(0))",
+          "expr": "round(sum(increase(gophprofile_avatar_uploads_total{service=~\"$service\",status=\"failed\"}[30m])) or vector(0))",
           "legendFormat": "failed",
           "range": true,
           "refId": "A"
@@ -219,7 +219,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(sum(rate(gophprofile_avatar_uploads_total{status=\"failed\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(gophprofile_avatar_uploads_total[$__rate_interval])), 0.0001)",
+          "expr": "(sum(rate(gophprofile_avatar_uploads_total{service=~\"$service\",status=\"failed\"}[$__rate_interval])) or vector(0)) / clamp_min(sum(rate(gophprofile_avatar_uploads_total{service=~\"$service\"}[$__rate_interval])), 0.0001)",
           "legendFormat": "доля",
           "range": true,
           "refId": "A"
@@ -288,7 +288,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(gophprofile_storage_bytes)",
+          "expr": "sum(gophprofile_storage_bytes{service=~\"$service\"})",
           "legendFormat": "байт",
           "range": true,
           "refId": "A"
@@ -358,7 +358,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (rate(gophprofile_avatar_uploads_total[$__rate_interval]))",
+          "expr": "sum by (status) (rate(gophprofile_avatar_uploads_total{service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "{{status}}",
           "range": true,
           "refId": "A"
@@ -428,7 +428,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(gophprofile_avatar_upload_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(gophprofile_avatar_upload_duration_seconds_bucket{service=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
@@ -439,7 +439,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(gophprofile_avatar_upload_duration_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gophprofile_avatar_upload_duration_seconds_bucket{service=~\"$service\"}[$__rate_interval])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "B"
@@ -523,7 +523,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (kind) (gophprofile_storage_bytes)",
+          "expr": "sum by (kind) (gophprofile_storage_bytes{service=~\"$service\"})",
           "legendFormat": "{{kind}}",
           "range": true,
           "refId": "A"
@@ -593,7 +593,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (kind) (gophprofile_storage_objects)",
+          "expr": "sum by (kind) (gophprofile_storage_objects{service=~\"$service\"})",
           "legendFormat": "{{kind}}",
           "range": true,
           "refId": "A"
@@ -662,7 +662,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (gophprofile_files)",
+          "expr": "sum by (status) (gophprofile_files{service=~\"$service\"})",
           "legendFormat": "{{status}}",
           "range": true,
           "refId": "A"
@@ -679,7 +679,38 @@
     "business"
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up{job=\"gophprofile\"}, service)",
+        "includeAll": true,
+        "label": "Сервис",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(up{job=\"gophprofile\"}, service)",
+          "refId": "service"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",
