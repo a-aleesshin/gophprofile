@@ -216,9 +216,28 @@ services:
       timeout: 3s
       retries: 20
 
+  jaeger-init:
+    image: alpine:3.21
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /var/lib/jaeger/keys /var/lib/jaeger/values &&
+        chown -R 10001:10001 /var/lib/jaeger
+    volumes:
+      - jaeger:/var/lib/jaeger
+    restart: "no"
+
   jaeger:
     image: jaegertracing/jaeger:2.12.0
     restart: unless-stopped
+    command: ["--config=file:/etc/jaeger/config.yaml"]
+    volumes:
+      - ./deploy/jaeger:/etc/jaeger:ro
+      - jaeger:/var/lib/jaeger
+    depends_on:
+      jaeger-init:
+        condition: service_completed_successfully
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
       - "${JAEGER_OTLP_PORT:-4317}:4317"
@@ -322,7 +341,9 @@ services:
       dockerfile: deploy/file.Dockerfile
     image: gophprofile/file:dev
     entrypoint: ["migrate"]
-    environment: *file-env
+    environment:
+      <<: *file-env
+      TRACING_ENABLED: "false"
     depends_on:
       file-db:
         condition: service_healthy
@@ -406,7 +427,9 @@ services:
       dockerfile: deploy/profile.Dockerfile
     image: gophprofile/profile:dev
     entrypoint: ["migrate"]
-    environment: *profile-env
+    environment:
+      <<: *profile-env
+      TRACING_ENABLED: "false"
     depends_on:
       profile-db:
         condition: service_healthy
@@ -501,6 +524,7 @@ services:
 volumes:
   alertmanager:
   fluent-bit:
+  jaeger:
   opensearch:
   grafana:
   prometheus:
