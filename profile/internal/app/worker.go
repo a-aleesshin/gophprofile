@@ -124,7 +124,7 @@ func BuildWorker(
 			}
 
 			if result.Recovered+result.Failed+result.Skipped > 0 {
-				logger.Info("recovered stale uploads",
+				logger.InfoContext(ctx, "recovered stale uploads",
 					"recovered", result.Recovered,
 					"failed", result.Failed,
 					"skipped", result.Skipped)
@@ -147,7 +147,7 @@ func BuildWorker(
 			}
 
 			if result.Failed+result.Skipped > 0 {
-				logger.Info("failed stuck avatars",
+				logger.InfoContext(ctx, "failed stuck avatars",
 					"failed", result.Failed,
 					"skipped", result.Skipped)
 			}
@@ -182,7 +182,7 @@ func BuildWorker(
 			}
 
 			if removed.Published > 0 || removed.Parked > 0 {
-				logger.Info("pruned outbox rows",
+				logger.InfoContext(ctx, "pruned outbox rows",
 					"published", removed.Published, "parked", removed.Parked)
 			}
 
@@ -200,7 +200,7 @@ func BuildWorker(
 			}
 
 			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
-				logger.Info("pruned inbox rows",
+				logger.InfoContext(ctx, "pruned inbox rows",
 					"processed", removed.Processed,
 					"failures", removed.Failures,
 					"dropped", removed.Dropped)

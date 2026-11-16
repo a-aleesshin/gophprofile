@@ -200,7 +200,7 @@ func BuildWorker(
 			}
 
 			for _, failure := range result.Failures {
-				logger.Warn("upload reconcile attempt failed",
+				logger.WarnContext(ctx, "upload reconcile attempt failed",
 					"upload_id", failure.UploadID.String(),
 					"attempts", failure.Attempts,
 					"max_attempts", cfg.Jobs.ReconcileAttempts,
@@ -208,7 +208,7 @@ func BuildWorker(
 			}
 
 			if result.Completed+result.Expired+result.Aborted+result.Failed > 0 {
-				logger.Info("reconciled uploads",
+				logger.InfoContext(ctx, "reconciled uploads",
 					"completed", result.Completed,
 					"expired", result.Expired,
 					"aborted", result.Aborted,
@@ -232,7 +232,7 @@ func BuildWorker(
 			}
 
 			if result.Rejected+result.Requeued+result.Failed > 0 {
-				logger.Info("reaped stale files",
+				logger.InfoContext(ctx, "reaped stale files",
 					"rejected", result.Rejected,
 					"requeued", result.Requeued,
 					"failed", result.Failed)
@@ -274,7 +274,7 @@ func BuildWorker(
 			}
 
 			if removed.Published > 0 || removed.Parked > 0 {
-				logger.Info("pruned outbox rows",
+				logger.InfoContext(ctx, "pruned outbox rows",
 					"published", removed.Published, "parked", removed.Parked)
 			}
 
@@ -292,7 +292,7 @@ func BuildWorker(
 			}
 
 			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
-				logger.Info("pruned inbox rows",
+				logger.InfoContext(ctx, "pruned inbox rows",
 					"processed", removed.Processed,
 					"failures", removed.Failures,
 					"dropped", removed.Dropped)

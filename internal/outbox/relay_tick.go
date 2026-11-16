@@ -358,7 +358,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed, stats.Parked)
 
 		for _, message := range stats.ParkedRows {
-			r.logger.Warn("parked an outbox row",
+			r.logger.WarnContext(ctx, "parked an outbox row",
 				"transport", r.transport,
 				"outbox_id", message.ID,
 				"destination", message.Destination,
