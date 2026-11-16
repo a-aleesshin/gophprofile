@@ -15,3 +15,6 @@ route:
 
 receivers:
   - name: default
+    webhook_configs:
+      - url: http://alert-sink:8080/alerts
+        send_resolved: true
