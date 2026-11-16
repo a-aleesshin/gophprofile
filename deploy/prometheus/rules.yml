@@ -106,13 +106,18 @@ groups:
   - name: gophprofile-resources
     rules:
       - alert: DatabasePoolExhausted
-        expr: rate(gophprofile_db_pool_empty_acquires_total[5m]) > 0
+        expr: increase(gophprofile_db_pool_empty_acquires_total[5m]) > 30
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: Запросы {{ $labels.service }} ждут свободного соединения к Postgres
-          description: Прямой признак, что POSTGRES_MAX_CONNS мал для нагрузки.
+          description: >-
+            {{ $value | humanize }} ожиданий за пять минут — признак, что
+            POSTGRES_MAX_CONNS мал для нагрузки. Порог не нулевой намеренно:
+            у холодного пула первые захваты сами открывают соединения и тоже
+            считаются ожиданиями, поэтому каждый рестарт давал несколько штук
+            и правило уходило в pending без повода.
 
   - name: gophprofile-business
     rules:
