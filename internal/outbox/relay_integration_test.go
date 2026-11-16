@@ -1538,7 +1538,7 @@ func TestWriteStoresTheTraceOfItsCaller(t *testing.T) {
 	assert.Equal(t, span.SpanContext().TraceID(), links[0].SpanContext.TraceID())
 }
 
-func TestATickThatPublishesGetsASpan(t *testing.T) {
+func TestATickThatPublishesNestsThePublishUnderIt(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
 
@@ -1565,23 +1565,32 @@ func TestATickThatPublishesGetsASpan(t *testing.T) {
 	require.Equal(t, 1, stats.Published)
 
 	// Assert
-	spans := recorder.Ended()
-	require.Len(t, spans, 1)
+	byName := make(map[string]sdktrace.ReadOnlySpan, 2)
+	for _, span := range recorder.Ended() {
+		byName[span.Name()] = span
+	}
 
-	assert.Equal(t, "outbox publish kafka", spans[0].Name())
-	assert.Equal(t, trace.SpanKindProducer, spans[0].SpanKind())
+	tick, found := byName["outbox tick kafka"]
+	require.True(t, found)
 
-	attributes := make(map[attribute.Key]attribute.Value, len(spans[0].Attributes()))
-	for _, kv := range spans[0].Attributes() {
+	publish, found := byName["outbox publish kafka"]
+	require.True(t, found)
+
+	assert.Equal(t, tick.SpanContext().SpanID(), publish.Parent().SpanID(),
+		"the tick is the unit of work; sending is one phase of it, alongside leasing and settling")
+	assert.Equal(t, trace.SpanKindProducer, publish.SpanKind())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(tick.Attributes()))
+	for _, kv := range tick.Attributes() {
 		attributes[kv.Key] = kv.Value
 	}
 
 	assert.Equal(t, "kafka", attributes["messaging.system"].AsString())
-	assert.Equal(t, int64(1), attributes["messaging.batch.message_count"].AsInt64())
 	assert.Equal(t, int64(1), attributes["messaging.published"].AsInt64())
+	assert.Equal(t, int64(0), attributes["messaging.parked"].AsInt64())
 }
 
-func TestAnIdleTickLeavesNoSpanBehind(t *testing.T) {
+func TestAnIdleTickStillGetsItsOwnSpan(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
 
@@ -1605,6 +1614,19 @@ func TestAnIdleTickLeavesNoSpanBehind(t *testing.T) {
 	// Assert
 	require.NoError(t, err)
 	require.Equal(t, RelayStats{}, stats)
-	assert.Empty(t, recorder.Ended(),
-		"the relay ticks on a timer, so an empty tick must not file a trace for nothing")
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1,
+		"an idle tick still runs the lease query, so the trace exists either way; "+
+			"the span is what gives it a name instead of a bare SELECT")
+
+	assert.Equal(t, "outbox tick kafka", spans[0].Name())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(spans[0].Attributes()))
+	for _, kv := range spans[0].Attributes() {
+		attributes[kv.Key] = kv.Value
+	}
+
+	assert.Equal(t, int64(0), attributes["messaging.batch.message_count"].AsInt64(),
+		"a named tick with a zero count is how an idle relay looks, and that is readable")
 }

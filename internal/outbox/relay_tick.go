@@ -30,6 +30,31 @@ type failure struct {
 }
 
 func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
+	ctx, tick := r.tracer.Start(ctx, "outbox tick "+r.transport,
+		trace.WithAttributes(messagingSystem(r.transport)))
+
+	defer tick.End()
+
+	stats, err := r.tick(ctx)
+
+	if tick.IsRecording() {
+		tick.SetAttributes(
+			semconv.MessagingBatchMessageCount(stats.Published+stats.Failed),
+			attribute.Int("messaging.published", stats.Published),
+			attribute.Int("messaging.failed", stats.Failed),
+			attribute.Int("messaging.parked", stats.Parked),
+		)
+
+		if err != nil {
+			tick.RecordError(err)
+			tick.SetStatus(codes.Error, err.Error())
+		}
+	}
+
+	return stats, err
+}
+
+func (r *Relay) tick(ctx context.Context) (RelayStats, error) {
 	now := r.clock.Now()
 
 	leased, err := r.lease(ctx, now)
