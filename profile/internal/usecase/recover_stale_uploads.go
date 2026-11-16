@@ -34,6 +34,7 @@ type RecoverStaleUploadsResult struct {
 	Recovered int
 	Failed    int
 	Skipped   int
+	Outcomes  []AvatarOutcome
 }
 
 type RecoverStaleUploadsHandler struct {
@@ -130,6 +131,7 @@ func (h *RecoverStaleUploadsHandler) Handle(
 			result.Recovered++
 		default:
 			result.Failed++
+			result.Outcomes = append(result.Outcomes, outcomeOf(&avatar, now))
 		}
 	}
 

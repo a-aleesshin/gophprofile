@@ -549,7 +549,7 @@ func recordSpans(t *testing.T) *tracetest.SpanRecorder {
 	return recorder
 }
 
-func TestProcessingLinksBackToTheProducer(t *testing.T) {
+func TestProcessingContinuesTheTraceOfTheProducer(t *testing.T) {
 	// Arrange
 	recorder := recordSpans(t)
 
@@ -591,17 +591,57 @@ func TestProcessingLinksBackToTheProducer(t *testing.T) {
 	require.NotNil(t, handled)
 	assert.Equal(t, "process ProcessFile", handled.Name())
 
-	assert.NotEqual(t, producer.TraceID(), handled.SpanContext().TraceID(),
-		"a message may wait minutes for the relay, so hanging it under the request "+
-			"would stretch that trace over the whole wait")
-
-	require.Len(t, handled.Links(), 1,
-		"without the link there is no way back from the work to the request that caused it")
-	assert.Equal(t, producer.TraceID(), handled.Links()[0].SpanContext.TraceID())
-	assert.Equal(t, producer.SpanID(), handled.Links()[0].SpanContext.SpanID())
+	assert.Equal(t, producer.TraceID(), handled.SpanContext().TraceID(),
+		"the request, the send and the work have to read as one trace in Jaeger")
+	assert.Equal(t, producer.SpanID(), handled.Parent().SpanID(),
+		"the send is what caused this work, so it is the parent, not a side reference")
+	assert.Empty(t, handled.Links(),
+		"a parent already says where the work came from, and a link would say it twice")
 
 	assert.Equal(t, handled.SpanContext().TraceID(), inside.TraceID(),
 		"whatever the handler does has to land in the same trace as the processing span")
+}
+
+func TestProcessingOfAnUntracedMessageStartsItsOwnTrace(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	id := uuid.New()
+
+	body, err := json.Marshal(outbox.Envelope{
+		MessageID: id,
+		Type:      "ProcessFile",
+		Data:      json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+
+	delivery := &fakeDelivery{body: body}
+
+	consumer, _ := testConsumer(t, func(context.Context, outbox.Envelope) error {
+		return nil
+	}, delivery)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Handled)
+
+	var handled sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.SpanKind() == trace.SpanKindConsumer {
+			handled = span
+
+			break
+		}
+	}
+
+	require.NotNil(t, handled)
+	assert.True(t, handled.SpanContext().IsValid())
+	assert.False(t, handled.Parent().IsValid(),
+		"a row written before the trace field existed still has to be observable")
 }
 
 func TestProcessingSpanCarriesTheOutcome(t *testing.T) {

@@ -139,6 +139,8 @@ func BuildWorker(
 				return err
 			}
 
+			observeOutcomes(result.Outcomes)
+
 			if result.Recovered+result.Failed+result.Skipped > 0 {
 				logger.InfoContext(ctx, "recovered stale uploads",
 					"recovered", result.Recovered,
@@ -161,6 +163,8 @@ func BuildWorker(
 			if err != nil {
 				return err
 			}
+
+			observeOutcomes(result.Outcomes)
 
 			if result.Failed+result.Skipped > 0 {
 				logger.InfoContext(ctx, "failed stuck avatars",

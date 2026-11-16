@@ -226,7 +226,7 @@ func (r *Relay) publish(ctx context.Context, leased []claimed) ([]int64, []failu
 			continue
 		}
 
-		if sendErr := r.sender.Send(ctx, message.Pending); sendErr != nil {
+		if sendErr := r.send(ctx, message.Pending); sendErr != nil {
 			if ctx.Err() != nil {
 				return published, failures, errors.Join(sendErr, ctx.Err())
 			}
@@ -243,6 +243,43 @@ func (r *Relay) publish(ctx context.Context, leased []claimed) ([]int64, []failu
 	}
 
 	return published, failures, nil
+}
+
+func (r *Relay) send(ctx context.Context, message Pending) error {
+	parent, traced := parentOf(ctx, message.Payload)
+	if !traced {
+		return r.sender.Send(ctx, message)
+	}
+
+	options := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			messagingSystem(message.Transport),
+			semconv.MessagingOperationTypeSend,
+			semconv.MessagingDestinationName(message.Destination),
+			semconv.MessagingMessageBodySize(len(message.Payload)),
+			attribute.Int64("messaging.outbox_id", message.ID),
+		),
+	}
+
+	if batch := trace.LinkFromContext(ctx); batch.SpanContext.IsValid() {
+		options = append(options, trace.WithLinks(batch))
+	}
+
+	sendCtx, span := r.tracer.Start(parent, "send "+message.Destination, options...)
+
+	defer span.End()
+
+	message.Payload = withTrace(sendCtx, message.Payload)
+
+	err := r.sender.Send(sendCtx, message)
+
+	if err != nil && span.IsRecording() {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	return err
 }
 
 func untouchedOf(leased []claimed, published []int64, failures []failure) []claimed {

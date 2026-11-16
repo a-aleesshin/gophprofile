@@ -120,7 +120,7 @@ func TestWriteKeepsTheTraceContextOutOfAMessageNobodyTraced(t *testing.T) {
 		"omitempty keeps the wire format of an untraced message exactly as it was")
 }
 
-func TestEnvelopeLinksBackToWhoeverWroteIt(t *testing.T) {
+func TestEnvelopeContinuesTheTraceOfWhoeverWroteIt(t *testing.T) {
 	t.Parallel()
 
 	// Arrange
@@ -142,20 +142,103 @@ func TestEnvelopeLinksBackToWhoeverWroteIt(t *testing.T) {
 	require.Contains(t, carrier, "traceparent")
 
 	// Act
-	links := Envelope{Trace: carrier}.Links()
+	parent := trace.SpanContextFromContext(
+		Envelope{Trace: carrier}.Context(context.Background()))
 
 	// Assert
-	require.Len(t, links, 1)
-	assert.Equal(t, writer.TraceID(), links[0].SpanContext.TraceID(),
-		"the consumer has to be able to point back at the request that caused the message")
-	assert.Equal(t, writer.SpanID(), links[0].SpanContext.SpanID())
+	assert.Equal(t, writer.TraceID(), parent.TraceID(),
+		"processing has to land in the trace of the request that caused the message")
+	assert.Equal(t, writer.SpanID(), parent.SpanID())
+	assert.True(t, parent.IsRemote())
+	assert.True(t, parent.IsSampled(),
+		"the sampling decision travels with the message, or half the trace is missing")
 }
 
-func TestEnvelopeWithoutATraceHasNoLinks(t *testing.T) {
+func TestEnvelopeWithoutAUsableTraceKeepsTheContextAsItWas(t *testing.T) {
 	t.Parallel()
 
-	assert.Nil(t, Envelope{}.Links())
-	assert.Nil(t, Envelope{Trace: map[string]string{}}.Links())
-	assert.Nil(t, Envelope{Trace: map[string]string{"traceparent": "nonsense"}}.Links(),
-		"a carrier we cannot parse must not produce a link to nowhere")
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	for name, envelope := range map[string]Envelope{
+		"no field":      {},
+		"empty carrier": {Trace: map[string]string{}},
+		"nonsense":      {Trace: map[string]string{"traceparent": "nonsense"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			parent := trace.SpanContextFromContext(envelope.Context(context.Background()))
+
+			assert.False(t, parent.IsValid(),
+				"a carrier we cannot parse must not produce a parent pointing nowhere")
+		})
+	}
+}
+
+func TestWithTraceReplacesOnlyTheTraceField(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	id := uuid.New()
+
+	payload, err := json.Marshal(Envelope{
+		MessageID: id,
+		Type:      "FileProcessed",
+		Trace:     map[string]string{"traceparent": "stale"},
+		Data:      json.RawMessage(`{"file_id":"abc"}`),
+	})
+	require.NoError(t, err)
+
+	relay := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		SpanID:     trace.SpanID{8, 7, 6, 5, 4, 3, 2, 1},
+		TraceFlags: trace.FlagsSampled,
+	})
+
+	// Act
+	rewritten := withTrace(
+		trace.ContextWithSpanContext(context.Background(), relay), payload)
+
+	// Assert
+	var envelope Envelope
+	require.NoError(t, json.Unmarshal(rewritten, &envelope))
+
+	assert.Equal(t, id, envelope.MessageID)
+	assert.Equal(t, "FileProcessed", envelope.Type)
+	assert.JSONEq(t, `{"file_id":"abc"}`, string(envelope.Data),
+		"rewriting the trace must not touch the message the handler will read")
+
+	parent := trace.SpanContextFromContext(envelope.Context(context.Background()))
+
+	assert.Equal(t, relay.SpanID(), parent.SpanID(),
+		"the consumer has to continue from the send, not from the stale hop before it")
+}
+
+func TestWithTraceLeavesAnUntracedPayloadAlone(t *testing.T) {
+	t.Parallel()
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	payload := []byte(`{"type":"FileProcessed"}`)
+
+	assert.Equal(t, payload, withTrace(context.Background(), payload))
+	assert.Equal(t, []byte("not json"), withTrace(
+		trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(
+			trace.SpanContextConfig{
+				TraceID:    trace.TraceID{1},
+				SpanID:     trace.SpanID{2},
+				TraceFlags: trace.FlagsSampled,
+			})), []byte("not json")),
+		"a payload we cannot parse has to travel untouched rather than be dropped")
 }

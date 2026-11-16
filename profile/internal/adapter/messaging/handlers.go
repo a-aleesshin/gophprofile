@@ -191,11 +191,13 @@ func FactHandlers(
 }
 
 func observeUpload(result usecase.ApplyFactResult, err error) {
-	if err != nil || result.Skipped || result.Status.IsZero() {
+	if err != nil {
 		return
 	}
 
-	metrics.ObserveAvatarUpload(result.Status.String(), result.Took)
+	if outcome, reached := result.Outcome(); reached {
+		metrics.ObserveAvatarUpload(outcome.Status.String(), outcome.Took)
+	}
 }
 
 func unprocessableIfPermanent(err error) error {

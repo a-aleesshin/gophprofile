@@ -169,9 +169,8 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 			err     error
 		)
 
-		handled, span := c.tracer.Start(ctx, "process "+envelope.Type,
+		handled, span := c.tracer.Start(envelope.Context(ctx), "process "+envelope.Type,
 			trace.WithSpanKind(trace.SpanKindConsumer),
-			trace.WithLinks(envelope.Links()...),
 			trace.WithAttributes(
 				semconv.MessagingOperationTypeProcess,
 				semconv.MessagingDestinationName(c.name),

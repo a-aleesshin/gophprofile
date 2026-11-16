@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
@@ -42,22 +41,6 @@ type Envelope struct {
 	OccurredAt time.Time         `json:"occurred_at"`
 	Trace      map[string]string `json:"trace,omitempty"`
 	Data       json.RawMessage   `json:"data"`
-}
-
-func (e Envelope) Links() []trace.Link {
-	if len(e.Trace) == 0 {
-		return nil
-	}
-
-	extracted := otel.GetTextMapPropagator().Extract(
-		context.Background(), propagation.MapCarrier(e.Trace))
-
-	spanContext := trace.SpanContextFromContext(extracted)
-	if !spanContext.IsValid() {
-		return nil
-	}
-
-	return []trace.Link{{SpanContext: spanContext}}
 }
 
 func messagingSystem(transport string) attribute.KeyValue {

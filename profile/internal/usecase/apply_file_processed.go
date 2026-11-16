@@ -28,6 +28,14 @@ type ApplyFactResult struct {
 	Promoted bool
 }
 
+func (r ApplyFactResult) Outcome() (AvatarOutcome, bool) {
+	if r.Skipped || r.Status.IsZero() {
+		return AvatarOutcome{}, false
+	}
+
+	return AvatarOutcome{Status: r.Status, Took: r.Took}, true
+}
+
 type ApplyFileProcessedHandler struct {
 	avatars  avatarByFileLoaderSaver
 	profiles profileLoaderSaver
