@@ -8,12 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -177,4 +180,64 @@ func TestATransactionShowsItsBoundaries(t *testing.T) {
 	assert.Contains(t, names, "BEGIN",
 		"a transaction that opens and commits is two statements, and both cost time")
 	assert.Contains(t, names, "COMMIT")
+}
+
+func TestABatchGetsOneSpanUnderTheCaller(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+	db := tracedPool(t)
+
+	batch := &pgx.Batch{}
+
+	batch.Queue(`SELECT 1`)
+	batch.Queue(`SELECT 2`)
+	batch.Queue(`SELECT 3`)
+
+	ctx, caller := otel.Tracer("test").Start(t.Context(), "caller")
+
+	// Act
+	results := db.Querier(ctx).SendBatch(ctx, batch)
+	require.NoError(t, results.Close())
+
+	caller.End()
+
+	// Assert
+	span := spanNamed(t, recorder, "BATCH")
+
+	assert.Equal(t, caller.SpanContext().SpanID(), span.Parent().SpanID(),
+		"a batch is one round trip of the caller, not a trace of its own")
+	assert.Equal(t, int64(3),
+		attributesOf(span)[semconv.DBOperationBatchSizeKey].AsInt64(),
+		"the size is the whole point: it says how much one round trip carried")
+}
+
+func TestAFailedBatchMarksItsSpan(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+	db := tracedPool(t)
+
+	batch := &pgx.Batch{}
+
+	batch.Queue(`SELECT 1`)
+	batch.Queue(`SELECT 1 / 0`)
+
+	// Act
+	results := db.Querier(t.Context()).SendBatch(t.Context(), batch)
+
+	_, firstErr := results.Exec()
+	_, secondErr := results.Exec()
+
+	_ = results.Close()
+
+	// Assert
+	require.NoError(t, firstErr)
+	require.Error(t, secondErr)
+
+	span := spanNamed(t, recorder, "BATCH")
+
+	assert.Equal(t, codes.Error, span.Status().Code)
+	require.NotEmpty(t, span.Events(),
+		"a batch can outlive one broken statement, so the failing one has to be named")
+	assert.Equal(t, "exception", span.Events()[0].Name,
+		"the span has to carry which statement broke, not only that something did")
 }

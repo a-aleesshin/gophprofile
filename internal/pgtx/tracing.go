@@ -16,6 +16,7 @@ import (
 const (
 	tracerName       = "github.com/a-aleesshin/gophprofile/internal/pgtx"
 	unknownOperation = "QUERY"
+	batchOperation   = "BATCH"
 )
 
 type queryTracer struct {
@@ -81,6 +82,55 @@ func (t *queryTracer) TraceQueryEnd(
 
 	if rows := data.CommandTag.RowsAffected(); rows > 0 {
 		span.SetAttributes(semconv.DBResponseReturnedRows(int(rows)))
+	}
+}
+
+func (t *queryTracer) TraceBatchStart(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceBatchStartData,
+) context.Context {
+	ctx, span := t.tracer.Start(ctx, batchOperation, t.options...)
+
+	if span.IsRecording() {
+		span.SetAttributes(
+			semconv.DBOperationName(batchOperation),
+			semconv.DBOperationBatchSize(data.Batch.Len()),
+		)
+	}
+
+	return ctx
+}
+
+func (t *queryTracer) TraceBatchQuery(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceBatchQueryData,
+) {
+	if data.Err == nil || errors.Is(data.Err, pgx.ErrNoRows) {
+		return
+	}
+
+	span := trace.SpanFromContext(ctx)
+
+	if !span.IsRecording() {
+		return
+	}
+
+	span.RecordError(data.Err, trace.WithAttributes(semconv.DBQueryText(data.SQL)))
+}
+
+func (t *queryTracer) TraceBatchEnd(
+	ctx context.Context,
+	_ *pgx.Conn,
+	data pgx.TraceBatchEndData,
+) {
+	span := trace.SpanFromContext(ctx)
+
+	defer span.End()
+
+	if data.Err != nil && span.IsRecording() {
+		span.SetStatus(codes.Error, data.Err.Error())
 	}
 }
 
