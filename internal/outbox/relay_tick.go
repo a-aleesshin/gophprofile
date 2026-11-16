@@ -17,6 +17,7 @@ const settleTimeout = 10 * time.Second
 type claimed struct {
 	Pending
 	availableAt time.Time
+	createdAt   time.Time
 }
 
 type failure struct {
@@ -58,7 +59,27 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 		return RelayStats{}, sendErr
 	}
 
-	return RelayStats{Published: len(published), Failed: len(failures)}, nil
+	var parked []ParkedMessage
+
+	for _, item := range failures {
+		if r.giveUpOn(item, now) {
+			parked = append(parked, ParkedMessage{
+				ID:           item.message.ID,
+				Destination:  item.message.Destination,
+				PartitionKey: item.message.PartitionKey,
+				Type:         item.message.Type,
+				Attempts:     item.message.Attempts + 1,
+				Err:          item.err,
+			})
+		}
+	}
+
+	return RelayStats{
+		Published:  len(published),
+		Failed:     len(failures),
+		Parked:     len(parked),
+		ParkedRows: parked,
+	}, nil
 }
 
 func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
@@ -66,25 +87,38 @@ func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
 
 	err := r.db.InTx(ctx, func(ctx context.Context) error {
 		rows, err := r.db.Querier(ctx).Query(ctx, `
-			SELECT id, destination, partition_key, message_type, payload,
-				attempts, available_at
-			  FROM outbox
-			 WHERE transport = $1 AND published_at IS NULL
-			 ORDER BY id
-			 LIMIT $2
-			   FOR UPDATE SKIP LOCKED`, r.transport, r.cfg.BatchSize)
+			SELECT o.id, o.destination, o.partition_key, o.message_type, o.payload,
+				o.attempts, o.available_at, o.created_at
+			  FROM outbox AS o
+			 WHERE o.transport = $1
+			   AND o.published_at IS NULL
+			   AND o.failed_at IS NULL
+			   AND o.available_at <= $2
+			   AND (o.partition_key IS NULL OR NOT EXISTS (
+					SELECT 1
+					  FROM outbox AS ahead
+					 WHERE ahead.transport = o.transport
+					   AND ahead.partition_key = o.partition_key
+					   AND ahead.published_at IS NULL
+					   AND ahead.failed_at IS NULL
+					   AND ahead.id < o.id
+					   AND ahead.available_at > $2))
+			 ORDER BY o.id
+			 LIMIT $3
+			   FOR UPDATE SKIP LOCKED`, r.transport, now, r.cfg.BatchSize)
 		if err != nil {
 			return fmt.Errorf("select outbox batch: %w", err)
 		}
 
-		pending, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (claimed, error) {
+		eligible, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (claimed, error) {
 			var (
 				message claimed
 				key     *string
 			)
 
 			if err := row.Scan(&message.ID, &message.Destination, &key, &message.Type,
-				&message.Payload, &message.Attempts, &message.availableAt); err != nil {
+				&message.Payload, &message.Attempts, &message.availableAt,
+				&message.createdAt); err != nil {
 				return claimed{}, err
 			}
 
@@ -98,25 +132,6 @@ func (r *Relay) lease(ctx context.Context, now time.Time) ([]claimed, error) {
 		})
 		if err != nil {
 			return fmt.Errorf("read outbox batch: %w", err)
-		}
-
-		blocked := make(map[string]struct{}, len(pending))
-		eligible = make([]claimed, 0, len(pending))
-
-		for _, message := range pending {
-			scope := scopeOf(message)
-
-			if _, stop := blocked[scope]; stop {
-				continue
-			}
-
-			if message.availableAt.After(now) {
-				blocked[scope] = struct{}{}
-
-				continue
-			}
-
-			eligible = append(eligible, message)
 		}
 
 		if len(eligible) == 0 {
@@ -249,26 +264,61 @@ func (r *Relay) settle(
 		reasons := make([]string, 0, len(failures))
 		retryAt := make([]time.Time, 0, len(failures))
 
+		parkedIDs := make([]int64, 0, len(failures))
+		parkedReasons := make([]string, 0, len(failures))
+
 		for _, item := range failures {
+			if r.giveUpOn(item, now) {
+				parkedIDs = append(parkedIDs, item.message.ID)
+				parkedReasons = append(parkedReasons, item.err.Error())
+
+				continue
+			}
+
 			ids = append(ids, item.message.ID)
 			reasons = append(reasons, item.err.Error())
 			retryAt = append(retryAt, now.Add(backoffFor(
 				item.message.Attempts, r.cfg.MinBackoff, r.cfg.MaxBackoff)))
 		}
 
+		if len(ids) > 0 {
+			if _, err := r.db.Querier(ctx).Exec(ctx, `
+				UPDATE outbox AS o
+				   SET attempts = o.attempts + 1,
+				       last_error = f.last_error,
+				       available_at = f.available_at
+				  FROM unnest($1::bigint[], $2::text[], $3::timestamptz[])
+				    AS f(id, last_error, available_at)
+				 WHERE o.id = f.id`, ids, reasons, retryAt); err != nil {
+				return fmt.Errorf("mark outbox failed: %w", err)
+			}
+		}
+
+		if len(parkedIDs) == 0 {
+			return nil
+		}
+
 		if _, err := r.db.Querier(ctx).Exec(ctx, `
 			UPDATE outbox AS o
 			   SET attempts = o.attempts + 1,
 			       last_error = f.last_error,
-			       available_at = f.available_at
-			  FROM unnest($1::bigint[], $2::text[], $3::timestamptz[])
-			    AS f(id, last_error, available_at)
-			 WHERE o.id = f.id`, ids, reasons, retryAt); err != nil {
-			return fmt.Errorf("mark outbox failed: %w", err)
+			       failed_at = $3
+			  FROM unnest($1::bigint[], $2::text[])
+			    AS f(id, last_error)
+			 WHERE o.id = f.id`, parkedIDs, parkedReasons, now); err != nil {
+			return fmt.Errorf("park outbox rows: %w", err)
 		}
 
 		return nil
 	})
+}
+
+func (r *Relay) giveUpOn(item failure, now time.Time) bool {
+	if errors.Is(item.err, ErrUnpublishable) {
+		return true
+	}
+
+	return now.Sub(item.message.createdAt) >= r.cfg.MaxAge
 }
 
 func (r *Relay) Run(ctx context.Context) error {
@@ -279,7 +329,18 @@ func (r *Relay) Run(ctx context.Context) error {
 	for {
 		stats, err := r.Tick(ctx)
 
-		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed)
+		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed, stats.Parked)
+
+		for _, message := range stats.ParkedRows {
+			r.logger.Warn("parked an outbox row",
+				"transport", r.transport,
+				"outbox_id", message.ID,
+				"destination", message.Destination,
+				"partition_key", message.PartitionKey,
+				"message_type", message.Type,
+				"attempts", message.Attempts,
+				"error", message.Err)
+		}
 
 		if err != nil {
 			return err
@@ -313,7 +374,7 @@ func (r *Relay) ObserveBacklog(ctx context.Context) error {
 	err := r.db.Querier(ctx).QueryRow(ctx, `
 		SELECT created_at
 		  FROM outbox
-		 WHERE transport = $1 AND published_at IS NULL
+		 WHERE transport = $1 AND published_at IS NULL AND failed_at IS NULL
 		 ORDER BY id
 		 LIMIT 1`, r.transport).Scan(&oldest)
 

@@ -135,3 +135,74 @@ func (stubTickets) CreateUpload(
 		ExpiresAt: time.Now().Add(time.Minute),
 	}, nil
 }
+
+type racingAvatars struct {
+	*Avatars
+
+	once sync.Once
+}
+
+func (r *racingAvatars) ByID(
+	ctx context.Context,
+	id domain.AvatarID,
+) (domain.Avatar, error) {
+	avatar, err := r.Avatars.ByID(ctx, id)
+	if err != nil {
+		return avatar, err
+	}
+
+	r.once.Do(func() {
+		other, loadErr := r.Avatars.ByID(ctx, id)
+		if loadErr != nil {
+			return
+		}
+
+		if failErr := other.MarkFailed("raced by a fact", time.Now()); failErr != nil {
+			return
+		}
+
+		_ = r.Save(ctx, &other)
+	})
+
+	return avatar, nil
+}
+
+func TestDeleteAvatarFinishesAfterLosingTheRace(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: a fact bumps the version between the handler's read and its save.
+	profiles := NewProfiles(sharedDB)
+	user := newUser(t)
+
+	avatar := newPendingAvatar(t, user)
+	require.NoError(t, avatar.StartProcessing(testFileRef(t), time.Now()))
+	require.NoError(t, NewAvatars(sharedDB).Save(t.Context(), &avatar))
+
+	racing := &racingAvatars{Avatars: NewAvatars(sharedDB)}
+
+	handler := usecase.NewDeleteAvatarHandler(racing, profiles,
+		noopPublisher{}, sharedDB, clock.System{})
+
+	// Act
+	got, err := handler.Handle(t.Context(), usecase.DeleteAvatarCommand{
+		AvatarID: avatar.ID(), UserID: user,
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Status.Equal(domain.AvatarStatusDeleted))
+
+	stored, err := NewAvatars(sharedDB).ByID(t.Context(), avatar.ID())
+	require.NoError(t, err)
+	assert.True(t, stored.IsDeleted(),
+		"the answer and the row must agree: a 204 on a live avatar is the bug")
+}
+
+type noopPublisher struct{}
+
+func (noopPublisher) PublishAvatarDeleted(
+	context.Context,
+	usecase.AvatarDeletedFact,
+) error {
+	return nil
+}

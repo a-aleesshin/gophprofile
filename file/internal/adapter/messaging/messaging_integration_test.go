@@ -266,7 +266,7 @@ func TestPublisher_SatisfiesTheUseCasePorts(t *testing.T) {
 	writer := newPublisher()
 
 	assert.NotNil(t, usecase.NewDeleteObjectsHandler(
-		nil, nil, writer, sharedDB, clock.System{}))
+		nil, nil, nil, writer, sharedDB, clock.System{}))
 	assert.NotNil(t, usecase.NewReapStaleFilesHandler(
 		nil, nil, nil, writer, writer, sharedDB, clock.System{}))
 	assert.NotNil(t, usecase.NewCompleteUploadHandler(
@@ -379,7 +379,7 @@ func TestAvatarDeletedIsAppliedInsideATransaction(t *testing.T) {
 
 	consumer, err := inbox.NewConsumer("file.worker.facts",
 		&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
-		inbox.NewInbox(sharedDB), FactHandlers(deleter))
+		inbox.NewInbox(sharedDB), FactHandlers(deleter), 10)
 	require.NoError(t, err)
 
 	// Act
@@ -422,7 +422,7 @@ func TestARedeliveredAvatarDeletedIsNotAppliedTwice(t *testing.T) {
 	newConsumer := func(delivery inbox.Delivery) *inbox.Consumer {
 		consumer, err := inbox.NewConsumer("file.worker.facts",
 			&oneFactBatch{deliveries: []inbox.Delivery{delivery}},
-			inbox.NewInbox(sharedDB), handlers)
+			inbox.NewInbox(sharedDB), handlers, 10)
 		require.NoError(t, err)
 
 		return consumer

@@ -84,7 +84,7 @@ func BuildWorker(
 
 	closers = append(closers, producer.Close)
 
-	relay, err := outbox.NewRelay(db, outbox.TransportKafka, producer, now, cfg.Relay)
+	relay, err := outbox.NewRelay(db, outbox.TransportKafka, producer, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build kafka relay: %w", err))
 	}
@@ -97,7 +97,8 @@ func BuildWorker(
 	closers = append(closers, source.Close)
 
 	consumer, err := inbox.NewConsumer(consumerName, source, inbox.NewInbox(db),
-		messaging.FactHandlers(applyProcessed, applyRejected, applyDeleted))
+		messaging.FactHandlers(applyProcessed, applyRejected, applyDeleted),
+		cfg.Inbox.MaxAttempts)
 	if err != nil {
 		return fail(fmt.Errorf("build fact consumer: %w", err))
 	}
@@ -170,8 +171,9 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned published outbox rows", "removed", removed)
+			if removed.Published > 0 || removed.Parked > 0 {
+				logger.Info("pruned outbox rows",
+					"published", removed.Published, "parked", removed.Parked)
 			}
 
 			return nil
@@ -187,8 +189,11 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned processed messages", "removed", removed)
+			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
+				logger.Info("pruned inbox rows",
+					"processed", removed.Processed,
+					"failures", removed.Failures,
+					"dropped", removed.Dropped)
 			}
 
 			return nil

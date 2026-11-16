@@ -122,7 +122,7 @@ func TestDeleteFile_MarksDeletingAndEnqueuesCleanup(t *testing.T) {
 	file, locations := testReadyFileWithVariants(t)
 	h := newDeleteFileHarness(t, []domain.File{file}, locations)
 
-	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 	require.NoError(t, err)
 
 	assert.True(t, got.Status.Equal(domain.FileStatusDeleting))
@@ -145,7 +145,7 @@ func TestDeleteFile_WorksWithoutVariants(t *testing.T) {
 	file := testReceivedFile(t)
 	h := newDeleteFileHarness(t, []domain.File{file}, nil)
 
-	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 	require.NoError(t, err)
 
 	assert.True(t, got.Status.Equal(domain.FileStatusDeleting))
@@ -192,7 +192,7 @@ func TestDeleteFile_IsIdempotent(t *testing.T) {
 
 			h := newDeleteFileHarness(t, []domain.File{file}, nil)
 
-			got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: id})
+			got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: id, OwnerRef: owner})
 			require.NoError(t, err)
 			assert.True(t, got.Status.Equal(status))
 			assert.Empty(t, h.files.saved)
@@ -215,6 +215,21 @@ func TestDeleteFile_Errors(t *testing.T) {
 		assert.Zero(t, h.files.calls)
 	})
 
+	t.Run("no owner to check against", func(t *testing.T) {
+		t.Parallel()
+
+		file := testReceivedFile(t)
+		h := newDeleteFileHarness(t, []domain.File{file}, nil)
+
+		_, err := h.handler.Handle(context.Background(),
+			DeleteFileCommand{FileID: file.ID()})
+
+		require.ErrorIs(t, err, ErrInvalidCommand,
+			"an absent owner used to skip the check instead of failing it")
+		assert.Zero(t, h.files.calls,
+			"the command is refused before the file is even read")
+	})
+
 	t.Run("variant lookup fails", func(t *testing.T) {
 		t.Parallel()
 
@@ -223,7 +238,7 @@ func TestDeleteFile_Errors(t *testing.T) {
 		h := newDeleteFileHarness(t, []domain.File{file}, nil)
 		h.variants.err = boom
 
-		_, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+		_, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 		require.ErrorIs(t, err, boom)
 		assert.Empty(t, h.files.saved)
 	})
@@ -236,7 +251,7 @@ func TestDeleteFile_Errors(t *testing.T) {
 		h := newDeleteFileHarness(t, []domain.File{file}, locations)
 		h.enqueuer.err = boom
 
-		_, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+		_, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 		require.ErrorIs(t, err, boom)
 	})
 
@@ -262,11 +277,69 @@ func TestDeleteFile_Errors(t *testing.T) {
 		h := newDeleteFileHarness(t, []domain.File{file, winner}, locations)
 		h.files.firstSaveErr = ErrStaleVersion
 
-		got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+		got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 		require.NoError(t, err)
 		assert.True(t, got.Status.Equal(domain.FileStatusDeleting))
 		assert.Equal(t, 2, h.files.calls)
 	})
+}
+
+func TestDeleteFile_DeletesAfterLosingToAWriteThatWasNotADelete(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: the winner moved the file on without deleting it, which is what
+	// processing or the reaper does. Reporting its status as our own result told
+	// profile the file was gone while it was still there.
+	file, locations := testReadyFileWithVariants(t)
+
+	bumped, err := domain.RestoreFile(domain.RestoreFileParams{
+		ID:        file.ID(),
+		Version:   9,
+		Namespace: file.Namespace(),
+		OwnerRef:  file.OwnerRef(),
+		Location:  file.Location(),
+		Status:    domain.FileStatusReady,
+		CreatedAt: testNow,
+		UpdatedAt: testNow,
+	})
+	require.NoError(t, err)
+
+	h := newDeleteFileHarness(t, []domain.File{file, bumped}, locations)
+	h.files.firstSaveErr = ErrStaleVersion
+
+	// Act
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: file.OwnerRef(),
+	})
+
+	// Assert
+	require.NoError(t, err)
+	assert.True(t, got.Status.Equal(domain.FileStatusDeleting),
+		"the retry reads the file again and deletes it for real")
+	assert.Equal(t, 2, h.files.calls)
+	require.Len(t, h.enqueuer.commands, 1,
+		"without the enqueue the objects stay in storage forever")
+}
+
+func TestDeleteFile_GivesUpWhenItKeepsLosing(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	file, locations := testReadyFileWithVariants(t)
+
+	h := newDeleteFileHarness(t, []domain.File{file}, locations)
+	h.files.firstSaveErr = ErrStaleVersion
+	h.files.saveErr = ErrStaleVersion
+
+	// Act
+	_, err := h.handler.Handle(context.Background(), DeleteFileCommand{
+		FileID: file.ID(), OwnerRef: file.OwnerRef(),
+	})
+
+	// Assert
+	require.ErrorIs(t, err, ErrStaleVersion,
+		"a caller told the delete succeeded would stop asking, and nothing deleted it")
+	assert.Equal(t, deleteFileAttempts, h.files.calls)
 }
 
 func TestDeleteFile_RefusesAFileOfAnotherOwner(t *testing.T) {
@@ -316,7 +389,7 @@ func TestDeleteFile_SkipsTheOwnerCheckWhenNoneIsGiven(t *testing.T) {
 	h := newDeleteFileHarness(t, []domain.File{file}, locations)
 
 	// Act
-	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID()})
+	got, err := h.handler.Handle(context.Background(), DeleteFileCommand{FileID: file.ID(), OwnerRef: file.OwnerRef()})
 
 	// Assert
 	require.NoError(t, err)

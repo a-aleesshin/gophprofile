@@ -100,7 +100,7 @@ func TestNewPrunerRejectsABrokenConfig(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := PrunerConfig{Retention: time.Hour, BatchSize: 10}
+			cfg := PrunerConfig{Retention: time.Hour, DroppedRetention: 2 * time.Hour, BatchSize: 10}
 			if test.mutate != nil {
 				test.mutate(&cfg)
 			}

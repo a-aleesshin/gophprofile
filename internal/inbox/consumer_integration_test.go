@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -83,6 +84,8 @@ func envelopeBody(t *testing.T, id uuid.UUID, messageType string) []byte {
 	return body
 }
 
+const testMaxAttempts = 3
+
 func testConsumer(
 	t *testing.T,
 	run func(ctx context.Context, message outbox.Envelope) error,
@@ -93,7 +96,7 @@ func testConsumer(
 	source := &fakeSource{batches: [][]Delivery{deliveries}}
 
 	consumer, err := NewConsumer("file.worker", source, NewInbox(sharedDB),
-		map[string]Handler{"ProcessFile": Repeatable(run)})
+		map[string]Handler{"ProcessFile": Repeatable(run)}, testMaxAttempts)
 	require.NoError(t, err)
 
 	return consumer, source
@@ -263,7 +266,7 @@ func TestConsumerReportsAFetchFailure(t *testing.T) {
 	consumer, err := NewConsumer("file.worker", source, NewInbox(sharedDB),
 		map[string]Handler{
 			"ProcessFile": Repeatable(func(context.Context, outbox.Envelope) error { return nil }),
-		})
+		}, testMaxAttempts)
 	require.NoError(t, err)
 
 	// Act
@@ -281,7 +284,7 @@ func TestConsumerRunStopsOnTheFirstFailure(t *testing.T) {
 	consumer, err := NewConsumer("file.worker", &fakeSource{err: broken}, NewInbox(sharedDB),
 		map[string]Handler{
 			"ProcessFile": Repeatable(func(context.Context, outbox.Envelope) error { return nil }),
-		})
+		}, testMaxAttempts)
 	require.NoError(t, err)
 
 	// Act
@@ -328,7 +331,7 @@ func TestConsumerRunsATransactionalHandlerInsideATransaction(t *testing.T) {
 
 				return nil
 			}),
-		})
+		}, testMaxAttempts)
 	require.NoError(t, err)
 
 	// Act
@@ -339,4 +342,163 @@ func TestConsumerRunsATransactionalHandlerInsideATransaction(t *testing.T) {
 	assert.Equal(t, Stats{Handled: 1}, stats)
 	assert.True(t, insideTransaction,
 		"a database-only effect commits together with its inbox row, that is the point")
+}
+
+func failureRow(t *testing.T, consumer string, id uuid.UUID) (int, string, bool) {
+	t.Helper()
+
+	var (
+		attempts  int
+		lastError string
+		dropped   bool
+	)
+
+	err := sharedDB.Pool().QueryRow(t.Context(), `
+		SELECT attempts, last_error, dropped_at IS NOT NULL
+		  FROM failed_messages WHERE consumer = $1 AND message_id = $2`,
+		consumer, id).Scan(&attempts, &lastError, &dropped)
+	require.NoError(t, err)
+
+	return attempts, lastError, dropped
+}
+
+func TestConsumerRetriesUntilTheAttemptsRunOut(t *testing.T) {
+	// Arrange
+	id := uuid.New()
+	boom := errors.New("duplicate key value violates unique constraint")
+
+	run := func(context.Context, outbox.Envelope) error { return boom }
+
+	// Act
+	outcomes := make([]Stats, 0, testMaxAttempts)
+	deliveries := make([]*fakeDelivery, 0, testMaxAttempts)
+
+	for range testMaxAttempts {
+		delivery := &fakeDelivery{body: envelopeBody(t, id, "ProcessFile")}
+		deliveries = append(deliveries, delivery)
+
+		consumer, _ := testConsumer(t, run, delivery)
+
+		stats, err := consumer.Consume(t.Context())
+		require.NoError(t, err,
+			"a message the handler cannot apply is not a reason to stop the consumer")
+
+		outcomes = append(outcomes, stats)
+	}
+
+	// Assert
+	assert.Equal(t, []Stats{
+		{Retried: 1},
+		{Retried: 1},
+		{Exhausted: 1},
+	}, outcomes, "the last attempt settles the message instead of handing it back")
+
+	assert.Equal(t, 1, deliveries[0].retried)
+	assert.Equal(t, 1, deliveries[1].retried)
+	assert.Zero(t, deliveries[2].retried,
+		"a rewind here would put the partition back where it started")
+	assert.Equal(t, 1, deliveries[2].dropped)
+	assert.Contains(t, deliveries[2].reason, "gave up after 3 attempts")
+	assert.Contains(t, deliveries[2].reason, "duplicate key")
+
+	attempts, lastError, dropped := failureRow(t, "file.worker", id)
+	assert.Equal(t, testMaxAttempts, attempts)
+	assert.True(t, dropped, "the row is the incident record, so it must say it was given up on")
+	assert.Contains(t, lastError, "duplicate key")
+}
+
+func TestConsumerCountsAttemptsAcrossRestarts(t *testing.T) {
+	// Arrange
+	id := uuid.New()
+	run := func(context.Context, outbox.Envelope) error { return errors.New("still broken") }
+
+	first := &fakeDelivery{body: envelopeBody(t, id, "ProcessFile")}
+	consumerA, _ := testConsumer(t, run, first)
+
+	_, err := consumerA.Consume(t.Context())
+	require.NoError(t, err)
+
+	attempts, _, _ := failureRow(t, "file.worker", id)
+	require.Equal(t, 1, attempts)
+
+	// Act
+	second := &fakeDelivery{body: envelopeBody(t, id, "ProcessFile")}
+	consumerB, _ := testConsumer(t, run, second)
+
+	stats, err := consumerB.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, Stats{Retried: 1}, stats)
+
+	attempts, _, dropped := failureRow(t, "file.worker", id)
+	assert.Equal(t, 2, attempts,
+		"the counter lives in the database because Kafka carries nothing of its own, "+
+			"so a restart must not hand the message a fresh set of attempts")
+	assert.False(t, dropped)
+}
+
+func TestConsumerKeepsCountPerMessage(t *testing.T) {
+	// Arrange
+	poisoned, healthy := uuid.New(), uuid.New()
+
+	run := func(_ context.Context, message outbox.Envelope) error {
+		if message.MessageID == poisoned {
+			return errors.New("poison")
+		}
+
+		return nil
+	}
+
+	// Act
+	for range testMaxAttempts {
+		consumer, _ := testConsumer(t, run,
+			&fakeDelivery{body: envelopeBody(t, poisoned, "ProcessFile")})
+
+		_, err := consumer.Consume(t.Context())
+		require.NoError(t, err)
+	}
+
+	good := &fakeDelivery{body: envelopeBody(t, healthy, "ProcessFile")}
+	consumer, _ := testConsumer(t, run, good)
+
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, Stats{Handled: 1}, stats,
+		"a neighbour of a poisoned message must not inherit its attempts")
+	assert.Equal(t, 1, good.acked)
+
+	var rows int
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT count(*) FROM failed_messages WHERE message_id = $1`, healthy).Scan(&rows))
+	assert.Zero(t, rows, "the counter is keyed by message id, not by consumer")
+}
+
+func TestConsumerStillDropsWhatCanNeverBeProcessed(t *testing.T) {
+	// Arrange
+	id := uuid.New()
+	delivery := &fakeDelivery{body: envelopeBody(t, id, "ProcessFile")}
+
+	run := func(context.Context, outbox.Envelope) error {
+		return fmt.Errorf("%w: file id is not a uuid", ErrUnprocessable)
+	}
+
+	consumer, _ := testConsumer(t, run, delivery)
+
+	// Act
+	stats, err := consumer.Consume(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, Stats{Dropped: 1}, stats,
+		"a message that can never be applied does not need to spend attempts first")
+	assert.Equal(t, 1, delivery.dropped)
+	assert.Zero(t, delivery.retried)
+
+	var rows int
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT count(*) FROM failed_messages WHERE message_id = $1`, id).Scan(&rows))
+	assert.Zero(t, rows)
 }

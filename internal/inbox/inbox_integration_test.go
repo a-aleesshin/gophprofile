@@ -347,7 +347,7 @@ func TestPrunerKeepsTheRedeliveryWindow(t *testing.T) {
 	}
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: 336 * time.Hour, BatchSize: 100})
+		PrunerConfig{Retention: 336 * time.Hour, DroppedRetention: 720 * time.Hour, BatchSize: 100})
 	require.NoError(t, err)
 
 	// Act
@@ -355,7 +355,7 @@ func TestPrunerKeepsTheRedeliveryWindow(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), removed)
+	assert.Equal(t, int64(1), removed.Processed)
 
 	assert.Zero(t, processedCount(t, "prune.test", old))
 	assert.Equal(t, 1, processedCount(t, "prune.test", recent),
@@ -383,14 +383,14 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 	}
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, DroppedRetention: time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
 	counts := make([]int64, 0, 4)
 
 	for range 4 {
-		removed, pruneErr := pruner.pruneBatch(t.Context(), now.Add(-time.Hour))
+		removed, pruneErr := pruner.pruneProcessedBatch(t.Context(), now.Add(-time.Hour))
 		require.NoError(t, pruneErr)
 
 		counts = append(counts, removed)
@@ -422,7 +422,7 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	}
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, DroppedRetention: time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
@@ -433,9 +433,9 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	assert.Equal(t, int64(5), removed,
+	assert.Equal(t, int64(5), removed.Processed,
 		"a pass that stopped after one batch could never keep up with the consumer")
-	assert.Zero(t, again)
+	assert.Zero(t, again.Processed)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
@@ -464,7 +464,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	}
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 1})
+		PrunerConfig{Retention: time.Hour, DroppedRetention: time.Hour, BatchSize: 1})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -477,7 +477,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	require.Equal(t, context.Canceled, err,
 		"the pass checks the context between batches itself, so shutdown does not "+
 			"wait for a long backlog and the error arrives unwrapped by the driver")
-	assert.Zero(t, removed)
+	assert.Zero(t, removed.Processed)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),

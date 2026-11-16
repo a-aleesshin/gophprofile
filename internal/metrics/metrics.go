@@ -29,6 +29,12 @@ var (
 	// The one metric the design calls mandatory: a relay that stops publishing
 	// is invisible in every other number, because nothing fails and nothing
 	// errors — the rows simply keep piling up.
+	outboxParked = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "outbox_parked_total",
+		Help:      "Messages the relay gave up on, which need a human.",
+	}, []string{"transport"})
+
 	outboxBacklogAge = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Name:      "outbox_oldest_unpublished_age_seconds",
@@ -78,15 +84,20 @@ const (
 	OutcomeDuplicate = "duplicate"
 	OutcomeRetried   = "retried"
 	OutcomeDropped   = "dropped"
+	OutcomeExhausted = "exhausted"
 )
 
-func ObserveOutboxTick(transport string, published, failed int) {
+func ObserveOutboxTick(transport string, published, failed, parked int) {
 	if published > 0 {
 		outboxPublished.WithLabelValues(transport).Add(float64(published))
 	}
 
 	if failed > 0 {
 		outboxFailures.WithLabelValues(transport).Add(float64(failed))
+	}
+
+	if parked > 0 {
+		outboxParked.WithLabelValues(transport).Add(float64(parked))
 	}
 }
 
@@ -96,12 +107,13 @@ func SetOutboxBacklogAge(transport string, age time.Duration) {
 	outboxBacklogAge.WithLabelValues(transport).Set(age.Seconds())
 }
 
-func ObserveInbox(consumer string, handled, duplicate, retried, dropped int) {
+func ObserveInbox(consumer string, handled, duplicate, retried, dropped, exhausted int) {
 	for outcome, count := range map[string]int{
 		OutcomeHandled:   handled,
 		OutcomeDuplicate: duplicate,
 		OutcomeRetried:   retried,
 		OutcomeDropped:   dropped,
+		OutcomeExhausted: exhausted,
 	} {
 		if count > 0 {
 			inboxMessages.WithLabelValues(consumer, outcome).Add(float64(count))

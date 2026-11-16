@@ -29,6 +29,7 @@ type Common struct {
 type Jobs struct {
 	ReconcileInterval time.Duration `env:"RECONCILE_INTERVAL" envDefault:"1m"`
 	ReconcileLimit    int           `env:"RECONCILE_LIMIT" envDefault:"100"`
+	ReconcileAttempts int           `env:"RECONCILE_ATTEMPTS" envDefault:"10"`
 	ReapInterval      time.Duration `env:"REAP_INTERVAL" envDefault:"5m"`
 	ReapLimit         int           `env:"REAP_LIMIT" envDefault:"100"`
 	ReapStaleAfter    time.Duration `env:"REAP_STALE_AFTER" envDefault:"15m"`
@@ -45,6 +46,7 @@ type Worker struct {
 	Jobs        Jobs
 	OutboxPrune outbox.PrunerConfig
 	InboxPrune  inbox.PrunerConfig
+	Inbox       inbox.ConsumerConfig
 
 	Health        health.Config
 	HealthServer  httpserver.Config
@@ -101,6 +103,7 @@ func LoadWorker() (Worker, error) {
 		func() error { return config.LoadSection(&cfg.Jobs, "JOBS_") },
 		func() error { return config.LoadSection(&cfg.OutboxPrune, "PRUNE_") },
 		func() error { return config.LoadSection(&cfg.InboxPrune, "PRUNE_") },
+		func() error { return config.LoadSection(&cfg.Inbox, "CONSUME_") },
 		func() error { return config.LoadSection(&cfg.Health, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.HealthServer, "HEALTH_") },
 		func() error { return config.LoadSection(&cfg.MetricsServer, "METRICS_") },

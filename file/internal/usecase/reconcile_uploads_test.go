@@ -12,6 +12,8 @@ import (
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 )
 
+const testReconcileAttempts = 3
+
 type stubExpiredUploads struct {
 	uploads []domain.Upload
 	err     error
@@ -29,8 +31,10 @@ func (s *stubExpiredUploads) PendingExpiredBefore(
 }
 
 type stubScriptedHeader struct {
-	errs  []error
-	calls int
+	errs      []error
+	deleteErr error
+	calls     int
+	deleted   []domain.Location
 }
 
 func (s *stubScriptedHeader) Head(context.Context, domain.Location) (ObjectInfo, error) {
@@ -52,6 +56,12 @@ func (s *stubScriptedHeader) Head(context.Context, domain.Location) (ObjectInfo,
 	return ObjectInfo{SizeBytes: 2048, ContentType: "image/jpeg"}, nil
 }
 
+func (s *stubScriptedHeader) Delete(_ context.Context, locations ...domain.Location) error {
+	s.deleted = append(s.deleted, locations...)
+
+	return s.deleteErr
+}
+
 type stubCompleter struct {
 	err      error
 	commands []CompleteUploadCommand
@@ -65,6 +75,37 @@ func (s *stubCompleter) Handle(
 	return CompleteUploadResult{}, s.err
 }
 
+func newTestReconciler(
+	t *testing.T,
+	lister expiredUploadLister,
+	saver uploadSaver,
+	objects stagingObjects,
+	completer uploadCompleter,
+) *ReconcileUploadsHandler {
+	t.Helper()
+
+	handler, err := NewReconcileUploadsHandler(
+		lister, saver, objects, completer, fixedClock{now: testNow}, testReconcileAttempts,
+	)
+	require.NoError(t, err)
+
+	return handler
+}
+
+func testUploadWithAttempts(t *testing.T, attempts int) domain.Upload {
+	t.Helper()
+
+	upload := testPendingUpload(t, testNow.Add(-time.Hour))
+
+	for range attempts {
+		require.NoError(t, upload.FailAttempt(testNow.Add(-time.Minute)))
+	}
+
+	require.Equal(t, attempts, upload.Attempts())
+
+	return upload
+}
+
 func TestReconcileUploads(t *testing.T) {
 	t.Parallel()
 
@@ -76,9 +117,7 @@ func TestReconcileUploads(t *testing.T) {
 		saver := &stubUploadRepository{}
 		completer := &stubCompleter{}
 
-		handler := NewReconcileUploadsHandler(
-			lister, saver, &stubScriptedHeader{}, completer, fixedClock{now: testNow},
-		)
+		handler := newTestReconciler(t, lister, saver, &stubScriptedHeader{}, completer)
 
 		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
 		require.NoError(t, err)
@@ -99,12 +138,11 @@ func TestReconcileUploads(t *testing.T) {
 		saver := &stubUploadRepository{}
 		completer := &stubCompleter{}
 
-		handler := NewReconcileUploadsHandler(
+		handler := newTestReconciler(t,
 			&stubExpiredUploads{uploads: []domain.Upload{upload}},
 			saver,
 			&stubScriptedHeader{errs: []error{ErrObjectNotFound}},
 			completer,
-			fixedClock{now: testNow},
 		)
 
 		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
@@ -125,7 +163,7 @@ func TestReconcileUploads(t *testing.T) {
 			testPendingUpload(t, testNow.Add(-time.Hour)),
 		}
 
-		handler := NewReconcileUploadsHandler(
+		handler := newTestReconciler(t,
 			&stubExpiredUploads{uploads: uploads},
 			&stubUploadRepository{},
 			&stubScriptedHeader{errs: []error{
@@ -134,40 +172,140 @@ func TestReconcileUploads(t *testing.T) {
 				ErrObjectNotFound,
 			}},
 			&stubCompleter{},
-			fixedClock{now: testNow},
 		)
 
 		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
 		require.NoError(t, err)
-		assert.Equal(t, ReconcileUploadsResult{Completed: 1, Expired: 1, Failed: 1}, got)
+		assert.Equal(t, 1, got.Completed)
+		assert.Equal(t, 1, got.Expired)
+		assert.Equal(t, 1, got.Failed)
+		assert.Zero(t, got.Aborted)
 	})
 
-	t.Run("a failing completion is counted, not propagated", func(t *testing.T) {
+	t.Run("a failing completion burns one attempt and keeps the ticket", func(t *testing.T) {
 		t.Parallel()
 
-		handler := NewReconcileUploadsHandler(
-			&stubExpiredUploads{uploads: []domain.Upload{testPendingUpload(t, testNow)}},
-			&stubUploadRepository{},
-			&stubScriptedHeader{},
+		saver := &stubUploadRepository{}
+		objects := &stubScriptedHeader{}
+
+		handler := newTestReconciler(t,
+			&stubExpiredUploads{uploads: []domain.Upload{testUploadWithAttempts(t, 0)}},
+			saver,
+			objects,
 			&stubCompleter{err: errors.New("deadlock detected")},
-			fixedClock{now: testNow},
 		)
 
 		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
 		require.NoError(t, err)
-		assert.Equal(t, ReconcileUploadsResult{Failed: 1}, got)
+
+		assert.Equal(t, 1, got.Failed)
+		assert.Zero(t, got.Aborted)
+		require.Len(t, saver.saved, 1)
+		assert.Equal(t, 1, saver.saved[0].Attempts(),
+			"a transient failure must cost exactly one attempt")
+		assert.True(t, saver.saved[0].IsPending(),
+			"a ticket with attempts left stays pending so the next pass retries it")
+		assert.Empty(t, objects.deleted)
+	})
+
+	t.Run("the last attempt aborts the ticket and drops its object", func(t *testing.T) {
+		t.Parallel()
+
+		upload := testUploadWithAttempts(t, testReconcileAttempts-1)
+		saver := &stubUploadRepository{}
+		objects := &stubScriptedHeader{}
+
+		handler := newTestReconciler(t,
+			&stubExpiredUploads{uploads: []domain.Upload{upload}},
+			saver,
+			objects,
+			&stubCompleter{err: errors.New(`mime: expected slash after first token`)},
+		)
+
+		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, got.Aborted)
+		assert.Zero(t, got.Failed,
+			"an aborted ticket is settled, not another failure to retry")
+
+		require.Len(t, saver.saved, 1)
+		assert.True(t, saver.saved[0].Status().Equal(domain.UploadStatusAborted),
+			"a poisoned ticket must leave the pending set, or it is retried forever")
+
+		require.Len(t, objects.deleted, 1)
+		assert.Equal(t, upload.Location().String(), objects.deleted[0].String(),
+			"the staging object of a ticket nothing will ever reference must not survive it")
+
+		require.Len(t, got.Failures, 1)
+		assert.True(t, got.Failures[0].UploadID.Equal(upload.ID()),
+			"the caller must learn which ticket died, not just how many")
+		assert.Equal(t, testReconcileAttempts, got.Failures[0].Attempts)
+		assert.ErrorContains(t, got.Failures[0].Err, "mime")
+	})
+
+	t.Run("a ticket whose object will not delete stays pending", func(t *testing.T) {
+		t.Parallel()
+
+		saver := &stubUploadRepository{}
+		objects := &stubScriptedHeader{deleteErr: errors.New("503 SlowDown")}
+
+		handler := newTestReconciler(t,
+			&stubExpiredUploads{
+				uploads: []domain.Upload{testUploadWithAttempts(t, testReconcileAttempts-1)},
+			},
+			saver,
+			objects,
+			&stubCompleter{err: errors.New("bad content type")},
+		)
+
+		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
+		require.NoError(t, err)
+
+		assert.Zero(t, got.Aborted,
+			"aborting before the object is gone would strand it with nothing left to retry")
+		assert.Equal(t, 1, got.Failed)
+		assert.Empty(t, saver.saved,
+			"the row must keep its pending status so the next pass retries the delete")
+		require.Len(t, got.Failures, 1)
+		assert.ErrorContains(t, got.Failures[0].Err, "SlowDown")
+	})
+
+	t.Run("an unreachable store also runs out of attempts", func(t *testing.T) {
+		t.Parallel()
+
+		saver := &stubUploadRepository{}
+		objects := &stubScriptedHeader{
+			errs: []error{errors.New("AccessDenied")},
+		}
+
+		handler := newTestReconciler(t,
+			&stubExpiredUploads{
+				uploads: []domain.Upload{testUploadWithAttempts(t, testReconcileAttempts-1)},
+			},
+			saver,
+			objects,
+			&stubCompleter{},
+		)
+
+		got, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, got.Aborted,
+			"a HEAD that keeps failing for a reason of its own must terminate too")
+		require.Len(t, saver.saved, 1)
+		assert.True(t, saver.saved[0].Status().Equal(domain.UploadStatusAborted))
 	})
 
 	t.Run("listing failure aborts the run", func(t *testing.T) {
 		t.Parallel()
 
 		boom := errors.New("connection refused")
-		handler := NewReconcileUploadsHandler(
+		handler := newTestReconciler(t,
 			&stubExpiredUploads{err: boom},
 			&stubUploadRepository{},
 			&stubScriptedHeader{},
 			&stubCompleter{},
-			fixedClock{now: testNow},
 		)
 
 		_, err := handler.Handle(context.Background(), ReconcileUploadsCommand{Limit: 10})
@@ -178,13 +316,22 @@ func TestReconcileUploads(t *testing.T) {
 		t.Parallel()
 
 		lister := &stubExpiredUploads{}
-		handler := NewReconcileUploadsHandler(
+		handler := newTestReconciler(t,
 			lister, &stubUploadRepository{}, &stubScriptedHeader{}, &stubCompleter{},
-			fixedClock{now: testNow},
 		)
 
 		_, err := handler.Handle(context.Background(), ReconcileUploadsCommand{})
 		require.ErrorIs(t, err, ErrInvalidCommand)
 		assert.Zero(t, lister.limit)
+	})
+
+	t.Run("max attempts must be positive", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := NewReconcileUploadsHandler(
+			&stubExpiredUploads{}, &stubUploadRepository{}, &stubScriptedHeader{},
+			&stubCompleter{}, fixedClock{now: testNow}, 0,
+		)
+		require.ErrorIs(t, err, ErrInvalidCommand)
 	})
 }

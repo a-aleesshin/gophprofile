@@ -123,7 +123,7 @@ func publishingRelay(t *testing.T, sender Sender, maxFailures int) *Relay {
 	cfg := validRelayConfig()
 	cfg.MaxConsecutiveFailures = maxFailures
 
-	relay, err := NewRelay(pgtx.New(nil), TransportKafka, sender, clock.System{}, cfg)
+	relay, err := NewRelay(pgtx.New(nil), TransportKafka, sender, clock.System{}, testLogger(), cfg)
 	require.NoError(t, err)
 
 	return relay

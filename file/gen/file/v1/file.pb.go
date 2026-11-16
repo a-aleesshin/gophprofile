@@ -422,6 +422,7 @@ func (x *GetFileResponse) GetFile() *File {
 type DeleteFileRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
+	OwnerRef      string                 `protobuf:"bytes,2,opt,name=owner_ref,json=ownerRef,proto3" json:"owner_ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -459,6 +460,13 @@ func (*DeleteFileRequest) Descriptor() ([]byte, []int) {
 func (x *DeleteFileRequest) GetFileId() string {
 	if x != nil {
 		return x.FileId
+	}
+	return ""
+}
+
+func (x *DeleteFileRequest) GetOwnerRef() string {
+	if x != nil {
+		return x.OwnerRef
 	}
 	return ""
 }
@@ -952,9 +960,10 @@ const file_file_v1_file_proto_rawDesc = "" +
 	"\x0eGetFileRequest\x12\x17\n" +
 	"\afile_id\x18\x01 \x01(\tR\x06fileId\"@\n" +
 	"\x0fGetFileResponse\x12-\n" +
-	"\x04file\x18\x01 \x01(\v2\x19.gophprofile.file.v1.FileR\x04file\",\n" +
+	"\x04file\x18\x01 \x01(\v2\x19.gophprofile.file.v1.FileR\x04file\"I\n" +
 	"\x11DeleteFileRequest\x12\x17\n" +
-	"\afile_id\x18\x01 \x01(\tR\x06fileId\"M\n" +
+	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12\x1b\n" +
+	"\towner_ref\x18\x02 \x01(\tR\bownerRef\"M\n" +
 	"\x12DeleteFileResponse\x127\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x1f.gophprofile.file.v1.FileStatusR\x06status\",\n" +
 	"\x0fGetFilesRequest\x12\x19\n" +

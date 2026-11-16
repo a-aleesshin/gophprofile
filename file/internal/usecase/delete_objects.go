@@ -27,8 +27,13 @@ type DeleteObjectsResult struct {
 
 var ErrFileNotDeleting = errors.New("file is not marked for deletion")
 
+type stagingLocator interface {
+	StagingKeyByFileID(ctx context.Context, fileID domain.FileID) (domain.Location, error)
+}
+
 type DeleteObjectsHandler struct {
 	files     fileLoaderSaver
+	uploads   stagingLocator
 	objects   objectDeleter
 	publisher deletedFactPublisher
 	tx        transactor
@@ -37,6 +42,7 @@ type DeleteObjectsHandler struct {
 
 func NewDeleteObjectsHandler(
 	files fileLoaderSaver,
+	uploads stagingLocator,
 	objects objectDeleter,
 	publisher deletedFactPublisher,
 	tx transactor,
@@ -44,6 +50,7 @@ func NewDeleteObjectsHandler(
 ) *DeleteObjectsHandler {
 	return &DeleteObjectsHandler{
 		files:     files,
+		uploads:   uploads,
 		objects:   objects,
 		publisher: publisher,
 		tx:        tx,
@@ -78,7 +85,19 @@ func (h *DeleteObjectsHandler) Handle(
 		)
 	}
 
-	if err := h.objects.Delete(ctx, cmd.Locations...); err != nil {
+	locations := cmd.Locations
+
+	staging, err := h.uploads.StagingKeyByFileID(ctx, cmd.FileID)
+
+	switch {
+	case errors.Is(err, domain.ErrUploadNotFound):
+	case err != nil:
+		return DeleteObjectsResult{}, err
+	default:
+		locations = append(locations, staging)
+	}
+
+	if err := h.objects.Delete(ctx, locations...); err != nil {
 		return DeleteObjectsResult{}, err
 	}
 

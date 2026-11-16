@@ -12,6 +12,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/filegrpc"
+	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/identity"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/policy"
 	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/urls"
 	"github.com/a-aleesshin/gophprofile/profile/internal/transport/rest"
@@ -52,9 +53,10 @@ type Server struct {
 	Common
 	Observability
 
-	File filegrpc.Config
-	REST rest.Config
-	HTTP httpserver.Config
+	File     filegrpc.Config
+	Identity identity.Config
+	REST     rest.Config
+	HTTP     httpserver.Config
 }
 
 type Worker struct {
@@ -67,6 +69,7 @@ type Worker struct {
 	Jobs        Jobs
 	OutboxPrune outbox.PrunerConfig
 	InboxPrune  inbox.PrunerConfig
+	Inbox       inbox.ConsumerConfig
 }
 
 func load(sections ...func() error) error {
@@ -123,6 +126,7 @@ func LoadServer() (Server, error) {
 
 	if err := load(
 		func() error { return config.LoadSection(&cfg.File, "FILE_") },
+		func() error { return config.LoadSection(&cfg.Identity, "IDENTITY_") },
 		func() error { return config.LoadSection(&cfg.REST, "REST_") },
 		func() error { return config.LoadSection(&cfg.HTTP, "HTTP_") },
 	); err != nil {
@@ -150,6 +154,7 @@ func LoadWorker() (Worker, error) {
 		func() error { return config.LoadSection(&cfg.Jobs, "JOBS_") },
 		func() error { return config.LoadSection(&cfg.OutboxPrune, "PRUNE_") },
 		func() error { return config.LoadSection(&cfg.InboxPrune, "PRUNE_") },
+		func() error { return config.LoadSection(&cfg.Inbox, "CONSUME_") },
 	); err != nil {
 		return Worker{}, err
 	}

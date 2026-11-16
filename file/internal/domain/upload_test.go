@@ -252,6 +252,64 @@ func TestUpload_IsExpired(t *testing.T) {
 		"only a pending upload can expire")
 }
 
+func TestUpload_FailAttempt(t *testing.T) {
+	t.Parallel()
+
+	t.Run("counts up and moves the clock", func(t *testing.T) {
+		t.Parallel()
+
+		u := newTestUpload(t)
+		assert.Zero(t, u.Attempts())
+
+		later := testNow.Add(time.Minute)
+		require.NoError(t, u.FailAttempt(later))
+
+		assert.Equal(t, 1, u.Attempts())
+		assert.Equal(t, later.UTC(), u.UpdatedAt())
+		assert.True(t, u.IsPending(), "a burnt attempt is not a verdict on its own")
+
+		require.NoError(t, u.FailAttempt(later))
+		assert.Equal(t, 2, u.Attempts())
+	})
+
+	t.Run("a settled upload has no attempt left to fail", func(t *testing.T) {
+		t.Parallel()
+
+		for name, settle := range map[string]func(*Upload) error{
+			"uploaded": func(u *Upload) error { return u.Complete(testFileID(t), testNow) },
+			"expired":  func(u *Upload) error { return u.Expire(testNow) },
+			"aborted":  func(u *Upload) error { return u.Abort(testNow) },
+		} {
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+
+				u := newTestUpload(t)
+				require.NoError(t, settle(&u))
+
+				require.ErrorIs(t, u.FailAttempt(testNow), ErrForbiddenUploadTransition)
+				assert.Zero(t, u.Attempts())
+			})
+		}
+	})
+
+	t.Run("now is required", func(t *testing.T) {
+		t.Parallel()
+
+		u := newTestUpload(t)
+
+		require.ErrorIs(t, u.FailAttempt(time.Time{}), ErrInvalidUpload)
+		assert.Zero(t, u.Attempts())
+	})
+
+	t.Run("the domain never bumps the version", func(t *testing.T) {
+		t.Parallel()
+
+		u := newTestUpload(t)
+		require.NoError(t, u.FailAttempt(testNow))
+		assert.Equal(t, int64(1), u.Version())
+	})
+}
+
 func TestUpload_SetVersion(t *testing.T) {
 	t.Parallel()
 
@@ -292,6 +350,7 @@ func testRestoreUploadParams(t *testing.T) RestoreUploadParams {
 		MaxSize:        p.MaxSize,
 		Location:       location,
 		Status:         UploadStatusPending,
+		Attempts:       2,
 		ExpiresAt:      testNow.Add(testUploadTTL),
 		CreatedAt:      testNow,
 		UpdatedAt:      testNow,
@@ -307,6 +366,8 @@ func TestRestoreUpload(t *testing.T) {
 		u, err := RestoreUpload(testRestoreUploadParams(t))
 		require.NoError(t, err)
 		assert.Equal(t, int64(4), u.Version())
+		assert.Equal(t, 2, u.Attempts(),
+			"the attempt counter must survive a round trip, or the limit never binds")
 		assert.True(t, u.IsPending())
 		assert.True(t, u.FileID().IsZero())
 	})
@@ -354,6 +415,7 @@ func TestRestoreUpload(t *testing.T) {
 			{name: "expires at", mutate: func(p *RestoreUploadParams) { p.ExpiresAt = time.Time{} }},
 			{name: "created at", mutate: func(p *RestoreUploadParams) { p.CreatedAt = time.Time{} }},
 			{name: "updated at", mutate: func(p *RestoreUploadParams) { p.UpdatedAt = time.Time{} }},
+			{name: "negative attempts", mutate: func(p *RestoreUploadParams) { p.Attempts = -1 }},
 		}
 
 		for _, tt := range tests {

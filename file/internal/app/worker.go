@@ -91,9 +91,13 @@ func BuildWorker(
 		policies, uploads, files, store, publisher, db, now)
 	processFile := usecase.NewProcessFileHandler(
 		files, variants, store, processor, publisher, db, now)
-	deleteObjects := usecase.NewDeleteObjectsHandler(files, store, publisher, db, now)
+	deleteObjects := usecase.NewDeleteObjectsHandler(files, uploads, store, publisher, db, now)
 	deleteFile := usecase.NewDeleteFileHandler(files, variants, publisher, db, now)
-	reconcile := usecase.NewReconcileUploadsHandler(uploads, uploads, store, completeUpload, now)
+	reconcile, err := usecase.NewReconcileUploadsHandler(
+		uploads, uploads, store, completeUpload, now, cfg.Jobs.ReconcileAttempts)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobReconcile, err))
+	}
 	reap := usecase.NewReapStaleFilesHandler(
 		files, files, variants, publisher, publisher, db, now)
 
@@ -125,12 +129,13 @@ func BuildWorker(
 	closers = append(closers, kafkaProducer.Close)
 
 	rabbitRelay, err := outbox.NewRelay(
-		db, outbox.TransportRabbit, rabbitPublisher, now, cfg.Relay)
+		db, outbox.TransportRabbit, rabbitPublisher, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build rabbit relay: %w", err))
 	}
 
-	kafkaRelay, err := outbox.NewRelay(db, outbox.TransportKafka, kafkaProducer, now, cfg.Relay)
+	kafkaRelay, err := outbox.NewRelay(
+		db, outbox.TransportKafka, kafkaProducer, now, logger, cfg.Relay)
 	if err != nil {
 		return fail(fmt.Errorf("build kafka relay: %w", err))
 	}
@@ -150,7 +155,7 @@ func BuildWorker(
 	closers = append(closers, facts.Close)
 
 	factConsumer, err := inbox.NewConsumer(consumerName, facts, messageInbox,
-		messaging.FactHandlers(deleteFile))
+		messaging.FactHandlers(deleteFile), cfg.Inbox.MaxAttempts)
 	if err != nil {
 		return fail(fmt.Errorf("build fact consumer: %w", err))
 	}
@@ -166,7 +171,8 @@ func BuildWorker(
 
 		closers = append(closers, func() { _ = source.Close() })
 
-		consumer, consumerErr := inbox.NewConsumer(consumerName, source, messageInbox, commands)
+		consumer, consumerErr := inbox.NewConsumer(
+			consumerName, source, messageInbox, commands, cfg.Inbox.MaxAttempts)
 		if consumerErr != nil {
 			return fail(fmt.Errorf("build consumer for %s: %w", routingKey, consumerErr))
 		}
@@ -183,10 +189,19 @@ func BuildWorker(
 				return err
 			}
 
-			if result.Completed+result.Expired+result.Failed > 0 {
+			for _, failure := range result.Failures {
+				logger.Warn("upload reconcile attempt failed",
+					"upload_id", failure.UploadID.String(),
+					"attempts", failure.Attempts,
+					"max_attempts", cfg.Jobs.ReconcileAttempts,
+					"error", failure.Err)
+			}
+
+			if result.Completed+result.Expired+result.Aborted+result.Failed > 0 {
 				logger.Info("reconciled uploads",
 					"completed", result.Completed,
 					"expired", result.Expired,
+					"aborted", result.Aborted,
 					"failed", result.Failed)
 			}
 
@@ -248,8 +263,9 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned published outbox rows", "removed", removed)
+			if removed.Published > 0 || removed.Parked > 0 {
+				logger.Info("pruned outbox rows",
+					"published", removed.Published, "parked", removed.Parked)
 			}
 
 			return nil
@@ -265,8 +281,11 @@ func BuildWorker(
 				return err
 			}
 
-			if removed > 0 {
-				logger.Info("pruned processed messages", "removed", removed)
+			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
+				logger.Info("pruned inbox rows",
+					"processed", removed.Processed,
+					"failures", removed.Failures,
+					"dropped", removed.Dropped)
 			}
 
 			return nil

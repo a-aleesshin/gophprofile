@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -151,6 +152,10 @@ func readRow(t *testing.T, id int64) storedRow {
 	return row
 }
 
+func testRelayLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
+
 func testRelay(
 	t *testing.T,
 	transport string,
@@ -167,13 +172,14 @@ func testRelay(
 		MaxBackoff:             time.Minute,
 		MaxConsecutiveFailures: 3,
 		Lease:                  30 * time.Second,
+		MaxAge:                 24 * time.Hour,
 	}
 
 	if mutate != nil {
 		mutate(&cfg)
 	}
 
-	relay, err := NewRelay(sharedDB, transport, sender, clock.Fixed{At: now}, cfg)
+	relay, err := NewRelay(sharedDB, transport, sender, clock.Fixed{At: now}, testRelayLogger(), cfg)
 	require.NoError(t, err)
 
 	return relay
@@ -528,6 +534,104 @@ func TestRelayDoesNotLetLaterMessagesOvertakeAStalledOne(t *testing.T) {
 	assert.Zero(t, readRow(t, second).Attempts)
 }
 
+func TestRelayDoesNotSpendTheBatchOnAStalledScope(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+
+	stalled := insertPending(t, TransportKafka, "file-1", 0, now.Add(time.Minute))
+	behind := insertPending(t, TransportKafka, "file-1", 0, due)
+	other := insertPending(t, TransportKafka, "file-2", 0, due)
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, func(c *RelayConfig) { c.BatchSize = 2 })
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 1}, stats,
+		"a scope that cannot move must not consume the window of a scope that can")
+	require.Len(t, sender.sent, 1)
+	assert.Equal(t, other, sender.sent[0].ID)
+
+	assert.Nil(t, readRow(t, stalled).PublishedAt)
+	assert.Nil(t, readRow(t, behind).PublishedAt)
+	assert.Equal(t, due, readRow(t, behind).AvailableAt.UTC(),
+		"a row that was never a candidate must not be leased")
+}
+
+func TestRelayFillsTheBatchPastManyStalledScopes(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+	later := now.Add(time.Minute)
+
+	const stalledScopes = 8
+
+	for i := range stalledScopes {
+		key := fmt.Sprintf("stalled-%d", i)
+		insertPending(t, TransportKafka, key, 0, later)
+		insertPending(t, TransportKafka, key, 0, due)
+	}
+
+	ready := make([]int64, 0, 3)
+	for i := range 3 {
+		ready = append(ready,
+			insertPending(t, TransportKafka, fmt.Sprintf("ready-%d", i), 0, due))
+	}
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, func(c *RelayConfig) { c.BatchSize = 3 })
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 3}, stats,
+		"sixteen rows that cannot move sit ahead of these three and must not hide them")
+
+	sent := make([]int64, 0, len(sender.sent))
+	for _, message := range sender.sent {
+		sent = append(sent, message.ID)
+	}
+
+	assert.Equal(t, ready, sent)
+}
+
+func TestRelayTreatsEveryKeylessRowAsItsOwnScope(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	due := now.Add(-time.Minute)
+
+	stalled := insertPending(t, TransportKafka, "", 0, now.Add(time.Minute))
+	first := insertPending(t, TransportKafka, "", 0, due)
+	second := insertPending(t, TransportKafka, "", 0, due)
+
+	sender := &recordingSender{}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	// Act
+	stats, err := relay.Tick(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, RelayStats{Published: 2}, stats,
+		"a row with no partition key orders against nothing, so it blocks nothing")
+	require.Len(t, sender.sent, 2)
+	assert.Equal(t, []int64{first, second},
+		[]int64{sender.sent[0].ID, sender.sent[1].ID})
+	assert.Nil(t, readRow(t, stalled).PublishedAt)
+}
+
 func TestRelayResumesTheQueueOnceTheBackoffHasElapsed(t *testing.T) {
 	// Arrange
 	resetOutbox(t)
@@ -870,7 +974,7 @@ func TestPrunerRemovesOnlyPublishedRowsPastRetention(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: 72 * time.Hour, BatchSize: 100})
+		PrunerConfig{Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100})
 	require.NoError(t, err)
 
 	// Act
@@ -878,7 +982,8 @@ func TestPrunerRemovesOnlyPublishedRowsPastRetention(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), removed)
+	assert.Equal(t, int64(1), removed.Published)
+	assert.Zero(t, removed.Parked)
 
 	assert.False(t, rowExists(t, old))
 	assert.True(t, rowExists(t, recent), "inside the retention window it stays for debugging")
@@ -901,20 +1006,20 @@ func TestPrunerDeletesInBatches(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
-	first, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	first, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	second, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	second, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	third, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	third, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
-	fourth, err := pruner.pruneBatch(context.Background(), now.Add(-time.Hour))
+	fourth, err := pruner.prunePublishedBatch(context.Background(), now.Add(-time.Hour))
 	require.NoError(t, err)
 
 	// Assert
@@ -937,7 +1042,7 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 2})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2})
 	require.NoError(t, err)
 
 	// Act
@@ -948,9 +1053,9 @@ func TestPrunerDrainsThePastInOnePass(t *testing.T) {
 	require.NoError(t, err)
 
 	// Assert
-	assert.Equal(t, int64(5), removed,
+	assert.Equal(t, int64(5), removed.Published,
 		"a pass that stopped after one batch could never keep up with the relay")
-	assert.Zero(t, again)
+	assert.Zero(t, again.Published)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
@@ -973,7 +1078,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	require.NoError(t, err)
 
 	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now},
-		PrunerConfig{Retention: time.Hour, BatchSize: 1})
+		PrunerConfig{Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 1})
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -986,7 +1091,7 @@ func TestPrunerStopsOnACancelledContext(t *testing.T) {
 	require.Equal(t, context.Canceled, err,
 		"the pass checks the context between batches itself, so shutdown does not "+
 			"wait for a long backlog and the error arrives unwrapped by the driver")
-	assert.Zero(t, removed)
+	assert.Zero(t, removed.Published)
 
 	var left int
 	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
@@ -1063,4 +1168,319 @@ func TestRelayReportsTheBacklogOfItsOwnTransportOnly(t *testing.T) {
 	// Assert
 	assert.InDelta(t, 0, backlogAge(t, TransportKafka), 0.001,
 		"a stuck rabbit relay must not make the kafka one look stuck too")
+}
+
+var errSendFailed = errors.New("broker is unreachable")
+
+type unpublishableSender struct {
+	calls int
+}
+
+func (s *unpublishableSender) Send(context.Context, Pending) error {
+	s.calls++
+
+	return fmt.Errorf("%w: the record is larger than the broker accepts", ErrUnpublishable)
+}
+
+func parkedRow(t *testing.T, id int64) (bool, int, string) {
+	t.Helper()
+
+	var (
+		failedAt  *time.Time
+		attempts  int
+		lastError *string
+	)
+
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(), `
+		SELECT failed_at, attempts, last_error FROM outbox WHERE id = $1`, id).
+		Scan(&failedAt, &attempts, &lastError))
+
+	reason := ""
+	if lastError != nil {
+		reason = *lastError
+	}
+
+	return failedAt != nil, attempts, reason
+}
+
+func TestRelayParksAMessageTheBrokerWillNeverAccept(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	sender := &unpublishableSender{}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	id := insertPending(t, TransportKafka, "key", 0, now)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Equal(t, 1, stats.Parked)
+
+	parked, attempts, reason := parkedRow(t, id)
+	assert.True(t, parked, "a message that can never be sent must stop being retried")
+	assert.Equal(t, 1, attempts)
+	assert.Contains(t, reason, "larger than the broker accepts")
+}
+
+func TestRelayNamesTheRowItParked(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	id := insertPending(t, TransportKafka, "file-7", 2, now)
+
+	relay := testRelay(t, TransportKafka, &unpublishableSender{}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Len(t, stats.ParkedRows, 1,
+		"a counter cannot tell anyone which row stopped, so the row must come back")
+
+	parked := stats.ParkedRows[0]
+	assert.Equal(t, id, parked.ID)
+	assert.Equal(t, "file-7", parked.PartitionKey)
+	assert.Equal(t, "test.destination", parked.Destination)
+	assert.Equal(t, "TestMessage", parked.Type)
+	assert.Equal(t, 3, parked.Attempts,
+		"the report counts the attempt that gave up, as the stored row does")
+	assert.ErrorContains(t, parked.Err, "larger than the broker accepts")
+
+	stored, attempts, _ := parkedRow(t, id)
+	assert.True(t, stored)
+	assert.Equal(t, parked.Attempts, attempts,
+		"the number in the log must be the number in the table")
+}
+
+func TestRelayReportsNoParkedRowWhenItParksNothing(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	insertPending(t, TransportKafka, "file-8", 0, now.Add(-time.Minute))
+
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failOn: 1, err: errors.New("broker is down")}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Zero(t, stats.Parked)
+	assert.Empty(t, stats.ParkedRows,
+		"a failure that will be retried is not an incident to report")
+}
+
+func TestRelayLeavesAParkedMessageAlone(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	sender := &unpublishableSender{}
+
+	insertPending(t, TransportKafka, "key", 0, now)
+
+	_, err := testRelay(t, TransportKafka, sender, now, nil).Tick(t.Context())
+	require.NoError(t, err)
+
+	// Act: a later relay, so an expired lease cannot be what keeps the row out.
+	later := testRelay(t, TransportKafka, sender, now.Add(time.Hour), nil)
+
+	stats, err := later.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.Failed, "the second tick must not see it at all")
+	assert.Equal(t, 1, sender.calls, "and must not hand it to the broker again")
+}
+
+func TestAParkedMessageStopsBlockingItsScope(t *testing.T) {
+	// Arrange: both messages share a partition key, so order matters between them.
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+
+	bad := insertPending(t, TransportKafka, "same-key", 0, now)
+	good := insertPending(t, TransportKafka, "same-key", 0, now)
+
+	sender := &scriptedSender{refuse: map[int64]error{
+		bad: fmt.Errorf("%w: too large", ErrUnpublishable),
+	}}
+	relay := testRelay(t, TransportKafka, sender, now, nil)
+
+	// Act
+	first, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+
+	second, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, 1, first.Parked)
+	assert.Equal(t, 1, second.Published,
+		"once the bad message is parked the rest of the key moves again")
+
+	parked, _, _ := parkedRow(t, bad)
+	assert.True(t, parked)
+	assert.NotNil(t, readRow(t, good).PublishedAt)
+}
+
+func TestRelayParksAMessageThatHasBeenFailingForTooLong(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failAll: true, err: errSendFailed}, now, func(c *RelayConfig) {
+			c.MaxAge = time.Hour
+		})
+
+	var id int64
+
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(), `
+		INSERT INTO outbox (transport, destination, partition_key, message_type, payload,
+			attempts, available_at, created_at)
+		VALUES ($1, 'test.destination', 'key', 'TestMessage', '{"x":1}', 9, $2, $3)
+		RETURNING id`, TransportKafka, now, now.Add(-2*time.Hour)).Scan(&id))
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Parked,
+		"an outage is survivable, two hours of the same failure is a stuck message")
+
+	parked, _, _ := parkedRow(t, id)
+	assert.True(t, parked)
+}
+
+func TestRelayKeepsRetryingAYoungFailure(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC()
+	relay := testRelay(t, TransportKafka,
+		&recordingSender{failAll: true, err: errSendFailed}, now, func(c *RelayConfig) {
+			c.MaxAge = time.Hour
+		})
+
+	id := insertPending(t, TransportKafka, "key", 0, now)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Failed)
+	assert.Equal(t, 0, stats.Parked, "a broker that is merely down must not park anything")
+
+	parked, _, _ := parkedRow(t, id)
+	assert.False(t, parked)
+}
+
+func park(t *testing.T, id int64, at time.Time) {
+	t.Helper()
+
+	_, err := sharedDB.Pool().Exec(context.Background(),
+		`UPDATE outbox SET failed_at = $2 WHERE id = $1`, id, at)
+	require.NoError(t, err)
+}
+
+func TestPrunerKeepsAParkedRowForItsOwnWindow(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	fresh := insertPending(t, TransportKafka, "file-fresh", 0, now)
+	stale := insertPending(t, TransportKafka, "file-stale", 0, now)
+
+	park(t, fresh, now.Add(-100*time.Hour))
+	park(t, stale, now.Add(-800*time.Hour))
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), removed.Parked)
+	assert.Zero(t, removed.Published)
+
+	assert.False(t, rowExists(t, stale))
+	assert.True(t, rowExists(t, fresh),
+		"a parked row is an incident somebody has to read, so it outlives a published one")
+}
+
+func TestPrunerDrainsParkedRowsInBatches(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	for n := range 5 {
+		park(t, insertPending(t, TransportKafka, fmt.Sprintf("file-%d", n), 0, now),
+			now.Add(-800*time.Hour))
+	}
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 2,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	again, err := pruner.Prune(context.Background())
+	require.NoError(t, err)
+
+	// Assert
+	assert.Equal(t, int64(5), removed.Parked,
+		"the dead letter table grows forever if a pass stops after one batch")
+	assert.Zero(t, again.Parked)
+
+	var left int
+	require.NoError(t, sharedDB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM outbox`).Scan(&left))
+	assert.Zero(t, left)
+}
+
+func TestPrunerLeavesAParkedRowAlonePastThePublishedWindow(t *testing.T) {
+	// Arrange: older than the published retention, younger than the parked one.
+	resetOutbox(t)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	parked := insertPending(t, TransportKafka, "file-parked", 0, now)
+	park(t, parked, now.Add(-100*time.Hour))
+
+	pruner, err := NewPruner(sharedDB, clock.Fixed{At: now}, PrunerConfig{
+		Retention: 72 * time.Hour, ParkedRetention: 720 * time.Hour, BatchSize: 100,
+	})
+	require.NoError(t, err)
+
+	// Act
+	removed, err := pruner.Prune(context.Background())
+
+	// Assert
+	require.NoError(t, err)
+	assert.Zero(t, removed.Published,
+		"the published window must not reach a row that was never published")
+	assert.Zero(t, removed.Parked)
+	assert.True(t, rowExists(t, parked))
 }

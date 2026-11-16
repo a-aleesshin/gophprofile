@@ -75,15 +75,23 @@ func TestLoadWorker(t *testing.T) {
 	assert.Equal(t, 3, cfg.Relay.MaxConsecutiveFailures)
 
 	assert.Equal(t, time.Minute, cfg.Jobs.ReconcileInterval)
+	assert.Equal(t, 10, cfg.Jobs.ReconcileAttempts,
+		"a ticket nothing can salvage must run out of attempts instead of being retried forever")
 	assert.Equal(t, 5*time.Minute, cfg.Jobs.ReapInterval)
 	assert.Equal(t, 15*time.Minute, cfg.Jobs.ReapStaleAfter)
 
 	assert.Equal(t, time.Hour, cfg.Jobs.PruneInterval)
 	assert.Equal(t, 72*time.Hour, cfg.OutboxPrune.Retention)
+	assert.Equal(t, 720*time.Hour, cfg.OutboxPrune.ParkedRetention,
+		"a parked row is an incident and outlives a published one by design")
 	assert.Equal(t, 1000, cfg.OutboxPrune.BatchSize)
 	assert.Equal(t, 336*time.Hour, cfg.InboxPrune.Retention,
 		"the inbox window must outlast the broker retention, or a replay is applied twice")
+	assert.Equal(t, 720*time.Hour, cfg.InboxPrune.DroppedRetention,
+		"a dropped message is an incident and outlives a processed one by design")
 	assert.Equal(t, 1000, cfg.InboxPrune.BatchSize)
+	assert.Equal(t, 10, cfg.Inbox.MaxAttempts,
+		"a message nothing can apply must run out of attempts instead of blocking its partition")
 
 	assert.Equal(t, 2*time.Second, cfg.Health.Timeout)
 	assert.Equal(t, ":8081", cfg.HealthServer.Addr)
@@ -132,6 +140,8 @@ func TestLoadReadsTheSectionPrefix(t *testing.T) {
 
 func TestLoadParsesNonStringFields(t *testing.T) {
 	setWorkerEnv(t)
+	t.Setenv("CONSUME_MAX_ATTEMPTS", "4")
+	t.Setenv("PRUNE_INBOX_DROPPED_RETENTION", "48h")
 	t.Setenv("S3_USE_SSL", "true")
 	t.Setenv("RELAY_BATCH_SIZE", "25")
 	t.Setenv("RABBIT_RETRY_LADDER", "500ms,2s")
@@ -142,6 +152,8 @@ func TestLoadParsesNonStringFields(t *testing.T) {
 
 	assert.True(t, cfg.S3.UseSSL)
 	assert.Equal(t, 25, cfg.Relay.BatchSize)
+	assert.Equal(t, 4, cfg.Inbox.MaxAttempts)
+	assert.Equal(t, 48*time.Hour, cfg.InboxPrune.DroppedRetention)
 	assert.Equal(t, []time.Duration{500 * time.Millisecond, 2 * time.Second}, cfg.Rabbit.Ladder)
 	assert.Equal(t, []string{"one:9092", "two:9092"}, cfg.Kafka.Brokers)
 }

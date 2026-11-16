@@ -92,6 +92,52 @@ func (i *Inbox) OnceOutsideTransaction(
 	return i.Mark(ctx, consumer, messageID)
 }
 
+type Failure struct {
+	Attempts int
+	Dropped  bool
+}
+
+func (i *Inbox) RecordFailure(
+	ctx context.Context,
+	consumer string,
+	messageID uuid.UUID,
+	cause error,
+	maxAttempts int,
+) (Failure, error) {
+	if err := validate(consumer, messageID); err != nil {
+		return Failure{}, err
+	}
+
+	switch {
+	case cause == nil:
+		return Failure{}, fmt.Errorf("%w: cause is required", ErrInvalidEffect)
+	case maxAttempts <= 0:
+		return Failure{}, fmt.Errorf("%w: max attempts must be positive", ErrInvalidEffect)
+	}
+
+	var failure Failure
+
+	if err := i.db.Querier(ctx).QueryRow(ctx, `
+		INSERT INTO failed_messages AS f (consumer, message_id, attempts, last_error, dropped_at)
+		VALUES ($1, $2, 1, $3, CASE WHEN 1 >= $4 THEN now() END)
+		ON CONFLICT (consumer, message_id) DO UPDATE
+		   SET attempts = f.attempts + 1,
+		       last_error = excluded.last_error,
+		       last_failed_at = now(),
+		       dropped_at = CASE
+		           WHEN f.attempts + 1 >= $4 THEN now()
+		           ELSE f.dropped_at
+		       END
+		RETURNING f.attempts, f.dropped_at IS NOT NULL`,
+		consumer, messageID, cause.Error(), maxAttempts,
+	).Scan(&failure.Attempts, &failure.Dropped); err != nil {
+		return Failure{}, fmt.Errorf(
+			"record failure of message %s for %s: %w", messageID, consumer, err)
+	}
+
+	return failure, nil
+}
+
 func validate(consumer string, messageID uuid.UUID) error {
 	switch {
 	case consumer == "":

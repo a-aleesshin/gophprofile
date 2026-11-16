@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -85,14 +84,13 @@ func TestOwnedRoutesNeedAUser(t *testing.T) {
 
 			absent, payload := h.do(t, route.method, route.path, route.body, nil)
 			require.Equal(t, http.StatusUnauthorized, absent.StatusCode)
-			assert.Equal(t, "no_user", decode[errorBody](t, payload).Error)
+			assert.Equal(t, "no_token", decode[errorBody](t, payload).Error)
 
-			// Whitespace alone never survives header parsing, so the value that
-			// reaches the handler has to be non-empty and still invalid.
-			broken, payload := h.do(t, route.method, route.path, route.body,
-				map[string]string{HeaderUserID: strings.Repeat("u", 256)})
-			require.Equal(t, http.StatusUnauthorized, broken.StatusCode)
-			assert.Equal(t, "bad_user", decode[errorBody](t, payload).Error)
+			forged, payload := h.do(t, route.method, route.path, route.body,
+				map[string]string{"Authorization": "Bearer " + testUser})
+			require.Equal(t, http.StatusUnauthorized, forged.StatusCode,
+				"naming a user is not the same as proving you are one")
+			assert.Equal(t, "bad_token", decode[errorBody](t, payload).Error)
 		})
 	}
 }
@@ -619,18 +617,18 @@ func TestNewHandlerRefusesAnIncompleteSet(t *testing.T) {
 			handlers := full
 			test.mutate(&handlers)
 
-			_, err := NewHandler(handlers, Config{Timeout: time.Second}, logger)
+			_, err := NewHandler(handlers, stubIdentity{}, Config{Timeout: time.Second}, logger)
 			require.ErrorIs(t, err, ErrIncompleteHandler)
 		})
 	}
 
-	_, err := NewHandler(full, Config{}, logger)
+	_, err := NewHandler(full, stubIdentity{}, Config{}, logger)
 	require.ErrorIs(t, err, ErrIncompleteHandler, "a route without a deadline is a hung request")
 
-	_, err = NewHandler(full, Config{Timeout: time.Second}, nil)
+	_, err = NewHandler(full, stubIdentity{}, Config{Timeout: time.Second}, nil)
 	require.ErrorIs(t, err, ErrIncompleteHandler)
 
-	_, err = NewHandler(full, Config{Timeout: time.Second}, logger)
+	_, err = NewHandler(full, stubIdentity{}, Config{Timeout: time.Second}, logger)
 	require.NoError(t, err)
 }
 
@@ -695,7 +693,7 @@ func TestPublicReadsCarryTheViewerWhenThereIsOne(t *testing.T) {
 		{name: "anonymous", viewer: ""},
 		{
 			name:    "signed in",
-			headers: map[string]string{HeaderUserID: testUser},
+			headers: bearerFor(testUser),
 			viewer:  testUser,
 		},
 	}
@@ -727,10 +725,94 @@ func TestPublicReadsRefuseAUserTheyCannotParse(t *testing.T) {
 	// Act
 	response, _ := h.do(t, http.MethodGet,
 		"/api/v1/avatars/"+testAvatar+"/metadata", "",
-		map[string]string{HeaderUserID: strings.Repeat("u", 256)})
+		map[string]string{"Authorization": "Bearer nonsense"})
 
 	// Assert
 	assert.Equal(t, http.StatusUnauthorized, response.StatusCode,
 		"sending the header and getting a stranger's view back would be worse than an error")
 	assert.True(t, h.get.cmd.AvatarID.IsZero(), "the handler must not run at all")
+}
+
+func TestSessionRouteIsAbsentWhenTheDemoDoorIsClosed(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarnessWithIdentity(t, stubIdentity{demoClosed: true})
+
+	// Act
+	response, payload := h.do(t, http.MethodPost, "/api/v1/sessions",
+		`{"user_id":"user-1","secret":"`+testSecret+`"}`, nil)
+
+	// Assert
+	assert.Equal(t, http.StatusNotFound, response.StatusCode,
+		"a closed door is not a 401 on a route that exists, it is no route at all")
+	assert.NotContains(t, string(payload), "token")
+}
+
+func TestSessionRefusesTheWrongSecret(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+
+	// Act
+	response, payload := h.do(t, http.MethodPost, "/api/v1/sessions",
+		`{"user_id":"user-1","secret":"guessing"}`, nil)
+
+	// Assert
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode)
+	assert.Equal(t, "bad_secret", decode[errorBody](t, payload).Error)
+	assert.NotContains(t, string(payload), "token",
+		"a refused login must not leak anything shaped like a token")
+}
+
+func TestSessionIssuesATokenForTheNamedUser(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+
+	// Act
+	response, payload := h.do(t, http.MethodPost, "/api/v1/sessions",
+		`{"user_id":"user-1","secret":"`+testSecret+`"}`, nil)
+
+	// Assert
+	require.Equal(t, http.StatusCreated, response.StatusCode, "body: %s", payload)
+
+	body := decode[openSessionBody](t, payload)
+	assert.Equal(t, "user-1", body.UserID)
+	assert.NotEmpty(t, body.Token)
+	assert.False(t, body.ExpiresAt.IsZero(),
+		"the page has to know when to ask for a new one")
+}
+
+func TestSessionRefusesAUserItCannotParse(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+
+	// Act
+	response, payload := h.do(t, http.MethodPost, "/api/v1/sessions",
+		`{"user_id":"","secret":"`+testSecret+`"}`, nil)
+
+	// Assert
+	require.Equal(t, http.StatusBadRequest, response.StatusCode)
+	assert.Equal(t, "invalid_user", decode[errorBody](t, payload).Error)
+}
+
+func TestOwnedRouteAcceptsAVerifiedToken(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	h := newHarness(t)
+	h.remove.result = usecase.DeleteAvatarResult{Status: domain.AvatarStatusDeleted}
+
+	// Act
+	response, _ := h.asUser(t, http.MethodDelete, "/api/v1/avatars/"+testAvatar, "")
+
+	// Assert
+	require.Equal(t, http.StatusNoContent, response.StatusCode)
+	assert.Equal(t, testUser, h.remove.cmd.UserID.String(),
+		"the identity now comes from the token, not from a header the client picks")
 }

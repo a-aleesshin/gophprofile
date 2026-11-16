@@ -366,7 +366,7 @@ func TestFactsAreAppliedInsideATransaction(t *testing.T) {
 	consumer, err := inbox.NewConsumer("profile.worker",
 		&oneBatch{deliveries: []inbox.Delivery{delivery}},
 		inbox.NewInbox(sharedDB),
-		FactHandlers(applier, rejectedFunc(applier.rejected), deletedNoop{}))
+		FactHandlers(applier, rejectedFunc(applier.rejected), deletedNoop{}), 10)
 	require.NoError(t, err)
 
 	// Act
@@ -415,7 +415,7 @@ func TestARedeliveredFactIsNotAppliedTwice(t *testing.T) {
 	newConsumer := func(delivery inbox.Delivery) *inbox.Consumer {
 		consumer, err := inbox.NewConsumer("profile.worker",
 			&oneBatch{deliveries: []inbox.Delivery{delivery}},
-			inbox.NewInbox(sharedDB), handlers)
+			inbox.NewInbox(sharedDB), handlers, 10)
 		require.NoError(t, err)
 
 		return consumer
@@ -458,7 +458,7 @@ func TestAFactWeCannotUseIsQuarantined(t *testing.T) {
 				t.Fatal("the handler must not be reached")
 
 				return usecase.ApplyFactResult{}, nil
-			}), deletedNoop{}))
+			}), deletedNoop{}), 10)
 	require.NoError(t, err)
 
 	// Act

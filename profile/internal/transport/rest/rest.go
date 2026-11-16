@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
+	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
 
@@ -79,6 +80,13 @@ type Config struct {
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"5s"`
 }
 
+type identityManager interface {
+	DemoLoginEnabled() bool
+	Login(secret string) error
+	Issue(user domain.UserID) (string, time.Time, error)
+	Verify(token string) (domain.UserID, error)
+}
+
 type Handlers struct {
 	StartUpload          uploadStarter
 	CompleteUpload       uploadCompleter
@@ -93,11 +101,17 @@ type Handlers struct {
 
 type Handler struct {
 	handlers Handlers
+	identity identityManager
 	logger   *slog.Logger
 	timeout  time.Duration
 }
 
-func NewHandler(handlers Handlers, cfg Config, logger *slog.Logger) (*Handler, error) {
+func NewHandler(
+	handlers Handlers,
+	identity identityManager,
+	cfg Config,
+	logger *slog.Logger,
+) (*Handler, error) {
 	missing := map[string]bool{
 		"StartUpload":          handlers.StartUpload == nil,
 		"CompleteUpload":       handlers.CompleteUpload == nil,
@@ -117,13 +131,20 @@ func NewHandler(handlers Handlers, cfg Config, logger *slog.Logger) (*Handler, e
 	}
 
 	switch {
+	case identity == nil:
+		return nil, fmt.Errorf("%w: no identity verifier", ErrIncompleteHandler)
 	case cfg.Timeout <= 0:
 		return nil, fmt.Errorf("%w: timeout must be positive", ErrIncompleteHandler)
 	case logger == nil:
 		return nil, fmt.Errorf("%w: logger is required", ErrIncompleteHandler)
 	}
 
-	return &Handler{handlers: handlers, logger: logger, timeout: cfg.Timeout}, nil
+	return &Handler{
+		handlers: handlers,
+		identity: identity,
+		logger:   logger,
+		timeout:  cfg.Timeout,
+	}, nil
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -135,7 +156,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	}
 
 	for pattern, handler := range owned {
-		mux.Handle(pattern, h.wrap(requireUser(handler)))
+		mux.Handle(pattern, h.wrap(h.requireUser(handler)))
 	}
 
 	public := map[string]http.HandlerFunc{
@@ -146,8 +167,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 		"GET /api/v1/users/{user_id}/avatar":       h.resolveCurrentAvatar,
 	}
 
+	if h.identity.DemoLoginEnabled() {
+		public["POST /api/v1/sessions"] = h.openSession
+	}
+
 	for pattern, handler := range public {
-		mux.Handle(pattern, h.wrap(optionalUser(handler)))
+		mux.Handle(pattern, h.wrap(h.optionalUser(handler)))
 	}
 }
 

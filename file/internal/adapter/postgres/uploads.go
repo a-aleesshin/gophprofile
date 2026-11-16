@@ -21,7 +21,8 @@ const (
 )
 
 const uploadColumns = `id, version, namespace, owner_ref, idempotency_key, original_name,
-	staging_key, declared_mime, max_size_bytes, status, file_id, expires_at, created_at, updated_at`
+	staging_key, declared_mime, max_size_bytes, status, file_id, attempts,
+	expires_at, created_at, updated_at`
 
 type Uploads struct {
 	db *pgtx.DB
@@ -142,6 +143,32 @@ func (r *Uploads) PendingExpiredBefore(
 	return uploads, nil
 }
 
+func (r *Uploads) StagingKeyByFileID(
+	ctx context.Context,
+	fileID domain.FileID,
+) (domain.Location, error) {
+	var raw string
+
+	err := r.db.Querier(ctx).QueryRow(ctx,
+		`SELECT staging_key FROM uploads WHERE file_id = $1`, fileID.UUID()).Scan(&raw)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Location{}, fmt.Errorf("%w: file %s",
+			domain.ErrUploadNotFound, fileID.String())
+	}
+
+	if err != nil {
+		return domain.Location{}, fmt.Errorf("select staging key: %w", err)
+	}
+
+	location, err := domain.RestoreLocation(raw)
+	if err != nil {
+		return domain.Location{}, err
+	}
+
+	return location, nil
+}
+
 func (r *Uploads) Save(ctx context.Context, upload *domain.Upload) error {
 	var fileID *uuid.UUID
 
@@ -156,13 +183,15 @@ func (r *Uploads) Save(ctx context.Context, upload *domain.Upload) error {
 		   SET version = version + 1,
 		       status = $3,
 		       file_id = $4,
-		       updated_at = $5
+		       attempts = $5,
+		       updated_at = $6
 		 WHERE id = $1 AND version = $2
 		RETURNING version`,
 		upload.ID().UUID(),
 		upload.Version(),
 		upload.Status().String(),
 		fileID,
+		upload.Attempts(),
 		upload.UpdatedAt(),
 	).Scan(&version)
 
@@ -190,6 +219,7 @@ func scanUpload(row pgx.Row) (domain.Upload, error) {
 		maxSizeBytes   int64
 		status         string
 		fileID         *uuid.UUID
+		attempts       int
 		expiresAt      time.Time
 		createdAt      time.Time
 		updatedAt      time.Time
@@ -197,7 +227,7 @@ func scanUpload(row pgx.Row) (domain.Upload, error) {
 
 	if err := row.Scan(
 		&id, &version, &namespace, &ownerRef, &idempotencyKey, &originalName,
-		&stagingKey, &declaredMime, &maxSizeBytes, &status, &fileID,
+		&stagingKey, &declaredMime, &maxSizeBytes, &status, &fileID, &attempts,
 		&expiresAt, &createdAt, &updatedAt,
 	); err != nil {
 		return domain.Upload{}, err
@@ -206,6 +236,7 @@ func scanUpload(row pgx.Row) (domain.Upload, error) {
 	params := domain.RestoreUploadParams{
 		ID:        domain.UploadIDFromUUID(id),
 		Version:   version,
+		Attempts:  attempts,
 		ExpiresAt: expiresAt,
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,

@@ -15,11 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
+	"github.com/a-aleesshin/gophprofile/profile/internal/adapter/identity"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
 
 const (
+	testSecret = "0123456789abcdef0123456789abcdef"
 	testUser   = "user-1"
 	testAvatar = "0193abcd-ef01-7a23-8b45-0123456789ab"
 )
@@ -185,6 +187,12 @@ type harness struct {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 
+	return newHarnessWithIdentity(t, stubIdentity{})
+}
+
+func newHarnessWithIdentity(t *testing.T, who identityManager) *harness {
+	t.Helper()
+
 	h := &harness{
 		start:    &stubStartUpload{},
 		complete: &stubCompleteUpload{},
@@ -207,7 +215,7 @@ func newHarness(t *testing.T) *harness {
 		ResolveByEmail:       h.byEmail,
 		DeleteAvatar:         h.remove,
 		BindEmail:            h.bind,
-	}, Config{Timeout: time.Second},
+	}, who, Config{Timeout: time.Second},
 		slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
@@ -257,7 +265,38 @@ func (h *harness) do(
 func (h *harness) asUser(t *testing.T, method, path, body string) (*http.Response, []byte) {
 	t.Helper()
 
-	return h.do(t, method, path, body, map[string]string{HeaderUserID: testUser})
+	return h.do(t, method, path, body, bearerFor(testUser))
+}
+
+// stubIdentity treats the token as the user id it stands for, so a test says
+// who it is without minting a signature. The real signer has its own tests.
+type stubIdentity struct{ demoClosed bool }
+
+func (s stubIdentity) DemoLoginEnabled() bool { return !s.demoClosed }
+
+func (stubIdentity) Login(secret string) error {
+	if secret != testSecret {
+		return identity.ErrBadSecret
+	}
+
+	return nil
+}
+
+func (stubIdentity) Issue(user domain.UserID) (string, time.Time, error) {
+	return "token-for-" + user.String(), testNow.Add(time.Hour), nil
+}
+
+func (stubIdentity) Verify(token string) (domain.UserID, error) {
+	name, found := strings.CutPrefix(token, "token-for-")
+	if !found {
+		return domain.UserID{}, identity.ErrBadToken
+	}
+
+	return domain.NewUserID(name)
+}
+
+func bearerFor(user string) map[string]string {
+	return map[string]string{"Authorization": "Bearer token-for-" + user}
 }
 
 func testAvatarID(t *testing.T) domain.AvatarID {
