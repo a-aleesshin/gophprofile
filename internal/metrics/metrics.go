@@ -191,6 +191,9 @@ type StorageUsage struct {
 }
 
 func SetStorageUsage(usage []StorageUsage) {
+	storageBytes.Reset()
+	storageObjects.Reset()
+
 	for _, entry := range usage {
 		storageBytes.WithLabelValues(entry.Kind).Set(float64(entry.Bytes))
 		storageObjects.WithLabelValues(entry.Kind).Set(float64(entry.Objects))

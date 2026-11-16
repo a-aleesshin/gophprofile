@@ -380,3 +380,21 @@ func TestObserveStillCreatesNoSeriesOnItsOwn(t *testing.T) {
 	assert.Equal(t, 0, testutil.CollectAndCount(outboxParked),
 		"an idle tick still must not invent a series; only the explicit init does that")
 }
+
+func TestStorageUsageForgetsAKindThatIsGone(t *testing.T) {
+	// Arrange
+	SetStorageUsage([]StorageUsage{
+		{Kind: "original", Bytes: 100, Objects: 1},
+		{Kind: "variant", Bytes: 40, Objects: 3},
+	})
+	require.InDelta(t, 40, testutil.ToFloat64(storageBytes.WithLabelValues("variant")), 0.001)
+
+	// Act
+	SetStorageUsage([]StorageUsage{{Kind: "original", Bytes: 100, Objects: 1}})
+
+	// Assert
+	assert.Equal(t, 1, testutil.CollectAndCount(storageBytes),
+		"a kind that stopped reporting must not keep forty bytes on the panel forever")
+	assert.Equal(t, 1, testutil.CollectAndCount(storageObjects))
+	assert.InDelta(t, 100, testutil.ToFloat64(storageBytes.WithLabelValues("original")), 0.001)
+}
