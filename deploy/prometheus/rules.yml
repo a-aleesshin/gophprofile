@@ -1,0 +1,86 @@
+groups:
+  - name: gophprofile-red
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(gophprofile_http_requests_total{status=~"5.."}[5m])) or vector(0))
+            / clamp_min(sum(rate(gophprofile_http_requests_total[5m])), 0.0001)
+            > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Более 5% запросов отвечают 5xx
+          description: Доля 5xx за пять минут — {{ $value | humanizePercentage }}.
+
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(gophprofile_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: p95 ответа превысил секунду
+          description: p95 сейчас {{ $value | humanizeDuration }}.
+
+  - name: gophprofile-delivery
+    rules:
+      - alert: OutboxRowsParked
+        expr: increase(gophprofile_outbox_parked_total[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Релей сдался на сообщении в {{ $labels.transport }}
+          description: >-
+            Припаркованная строка не уедет сама: её разбирает человек.
+            Идентификатор и причина — в логе по запросу msg:"parked an outbox row".
+
+      - alert: OutboxBacklogGrowing
+        expr: max by (transport) (gophprofile_outbox_oldest_unpublished_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Самая старая неотправленная строка старше пяти минут в {{ $labels.transport }}
+          description: >-
+            Релей может молчать, ничем не падая, поэтому это единственная метрика,
+            по которой видно остановку доставки.
+
+      - alert: MessagesExhausted
+        expr: increase(gophprofile_inbox_messages_total{outcome="exhausted"}[15m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Консьюмер {{ $labels.consumer }} отбросил сообщение, исчерпав попытки
+          description: Факт потерян безвозвратно, причина в failed_messages.last_error.
+
+      - alert: ConsumerLagGrowing
+        expr: max by (group) (gophprofile_kafka_consumer_lag) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Группа {{ $labels.group }} отстаёт на {{ $value }} сообщений
+
+  - name: gophprofile-resources
+    rules:
+      - alert: DatabasePoolExhausted
+        expr: rate(gophprofile_db_pool_empty_acquires_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Запросы ждут свободного соединения к Postgres
+          description: Прямой признак, что POSTGRES_MAX_CONNS мал для нагрузки.
+
+      - alert: AvatarUploadsFailing
+        expr: |
+          (sum(rate(gophprofile_avatar_uploads_total{status="failed"}[15m])) or vector(0))
+            / clamp_min(sum(rate(gophprofile_avatar_uploads_total[15m])), 0.0001)
+            > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Больше десятой части загрузок не доходит до ready

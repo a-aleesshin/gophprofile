@@ -341,3 +341,42 @@ func TestConsumerLagIsKeptPerTopic(t *testing.T) {
 	assert.InDelta(t, 0,
 		testutil.ToFloat64(consumerLag.WithLabelValues("file", "other.topic")), 0.001)
 }
+
+func TestInitOutboxMakesTheFirstEventVisibleToIncrease(t *testing.T) {
+	// Arrange
+	outboxParked.Reset()
+
+	// Act
+	InitOutbox("rabbit")
+
+	// Assert
+	assert.Equal(t, 1, testutil.CollectAndCount(outboxParked),
+		"increase() needs a sample before the event, or the first parked row is invisible to an alert")
+	assert.InDelta(t, 0, testutil.ToFloat64(outboxParked.WithLabelValues("rabbit")), 0.001)
+}
+
+func TestInitInboxCreatesEveryOutcomeAtZero(t *testing.T) {
+	// Arrange
+	inboxMessages.Reset()
+
+	// Act
+	InitInbox("file.worker")
+
+	// Assert
+	assert.Equal(t, 5, testutil.CollectAndCount(inboxMessages))
+	assert.InDelta(t, 0,
+		testutil.ToFloat64(inboxMessages.WithLabelValues("file.worker", OutcomeExhausted)), 0.001,
+		"exhausted is the one an alert watches, so it has to exist before anything is exhausted")
+}
+
+func TestObserveStillCreatesNoSeriesOnItsOwn(t *testing.T) {
+	// Arrange
+	outboxParked.Reset()
+
+	// Act
+	ObserveOutboxTick("kafka", 0, 0, 0)
+
+	// Assert
+	assert.Equal(t, 0, testutil.CollectAndCount(outboxParked),
+		"an idle tick still must not invent a series; only the explicit init does that")
+}

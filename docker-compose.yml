@@ -162,6 +162,23 @@ services:
       timeout: 3s
       retries: 30
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./deploy/alertmanager:/etc/alertmanager:ro
+      - alertmanager:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   prometheus:
     image: prom/prometheus:v3.7.3
     restart: unless-stopped
@@ -463,6 +480,7 @@ services:
         tag: gophprofile.{{.Name}}
 
 volumes:
+  alertmanager:
   opensearch:
   grafana:
   prometheus:

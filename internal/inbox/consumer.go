@@ -112,6 +112,8 @@ func NewConsumer(
 		routes[messageType] = handler
 	}
 
+	metrics.InitInbox(name)
+
 	return &Consumer{
 		name:        name,
 		source:      source,

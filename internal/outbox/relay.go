@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -105,6 +106,8 @@ func NewRelay(
 	case cfg.MaxAge <= 0:
 		return nil, fmt.Errorf("%w: max age must be positive", ErrInvalidRelayConfig)
 	}
+
+	metrics.InitOutbox(transport)
 
 	return &Relay{
 		db:        db,

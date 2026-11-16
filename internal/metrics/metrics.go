@@ -10,9 +10,6 @@ import (
 
 const namespace = "gophprofile"
 
-// Only this package knows about prometheus. Everything else reports through the
-// functions below, so the choice of client stays replaceable and no hot path
-// grows a collector of its own.
 var (
 	outboxPublished = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -26,9 +23,6 @@ var (
 		Help:      "Attempts the relay could not hand to the broker.",
 	}, []string{"transport"})
 
-	// The one metric the design calls mandatory: a relay that stops publishing
-	// is invisible in every other number, because nothing fails and nothing
-	// errors — the rows simply keep piling up.
 	outboxParked = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
 		Name:      "outbox_parked_total",
@@ -130,6 +124,20 @@ const (
 	OutcomeExhausted = "exhausted"
 )
 
+func InitOutbox(transport string) {
+	outboxPublished.WithLabelValues(transport).Add(0)
+	outboxFailures.WithLabelValues(transport).Add(0)
+	outboxParked.WithLabelValues(transport).Add(0)
+}
+
+func InitInbox(consumer string) {
+	for _, outcome := range []string{
+		OutcomeHandled, OutcomeDuplicate, OutcomeRetried, OutcomeDropped, OutcomeExhausted,
+	} {
+		inboxMessages.WithLabelValues(consumer, outcome).Add(0)
+	}
+}
+
 func ObserveOutboxTick(transport string, published, failed, parked int) {
 	if published > 0 {
 		outboxPublished.WithLabelValues(transport).Add(float64(published))
@@ -144,8 +152,6 @@ func ObserveOutboxTick(transport string, published, failed, parked int) {
 	}
 }
 
-// SetOutboxBacklogAge takes zero when nothing is waiting, so a drained outbox
-// reports 0 instead of keeping the last age it ever saw.
 func SetOutboxBacklogAge(transport string, age time.Duration) {
 	outboxBacklogAge.WithLabelValues(transport).Set(age.Seconds())
 }
@@ -222,8 +228,6 @@ func ConsumerLagForTest(group, topic string) prometheus.Gauge {
 	return consumerLag.WithLabelValues(group, topic)
 }
 
-// BacklogAgeForTest exposes the gauge so the relay's own integration test can
-// assert on it without making the collectors package-public.
 func BacklogAgeForTest(transport string) prometheus.Gauge {
 	return outboxBacklogAge.WithLabelValues(transport)
 }
