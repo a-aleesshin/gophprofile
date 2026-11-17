@@ -156,8 +156,17 @@ func SetOutboxBacklogAge(transport string, age time.Duration) {
 	outboxBacklogAge.WithLabelValues(transport).Set(age.Seconds())
 }
 
-func SetConsumerLag(group, topic string, lag int64) {
-	consumerLag.WithLabelValues(group, topic).Set(float64(lag))
+type ConsumerLag struct {
+	Topic string
+	Lag   int64
+}
+
+func SetConsumerLag(group string, lags []ConsumerLag) {
+	consumerLag.DeletePartialMatch(prometheus.Labels{"group": group})
+
+	for _, entry := range lags {
+		consumerLag.WithLabelValues(group, entry.Topic).Set(float64(entry.Lag))
+	}
 }
 
 func SetOutboxDepth(transport string, pending, parked int64) {

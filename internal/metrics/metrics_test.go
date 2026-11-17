@@ -332,14 +332,69 @@ func TestConsumerLagIsKeptPerTopic(t *testing.T) {
 	consumerLag.Reset()
 
 	// Act
-	SetConsumerLag("file", "gophprofile.profile.v1", 42)
-	SetConsumerLag("file", "other.topic", 0)
+	SetConsumerLag("file", []ConsumerLag{
+		{Topic: "gophprofile.profile.v1", Lag: 42},
+		{Topic: "other.topic", Lag: 0},
+	})
 
 	// Assert
 	assert.InDelta(t, 42,
 		testutil.ToFloat64(consumerLag.WithLabelValues("file", "gophprofile.profile.v1")), 0.001)
 	assert.InDelta(t, 0,
 		testutil.ToFloat64(consumerLag.WithLabelValues("file", "other.topic")), 0.001)
+}
+
+func TestConsumerLagForgetsATopicThatIsGone(t *testing.T) {
+	// Arrange
+	consumerLag.Reset()
+
+	SetConsumerLag("file", []ConsumerLag{
+		{Topic: "gophprofile.profile.v1", Lag: 7},
+		{Topic: "retired.topic", Lag: 900},
+	})
+	require.Equal(t, 2, testutil.CollectAndCount(consumerLag))
+
+	// Act
+	SetConsumerLag("file", []ConsumerLag{{Topic: "gophprofile.profile.v1", Lag: 7}})
+
+	// Assert
+	assert.Equal(t, 1, testutil.CollectAndCount(consumerLag),
+		"серия исчезнувшего топика держала бы девятьсот сообщений лага навсегда, "+
+			"и алерт смотрел бы на топик, которого нет")
+	assert.InDelta(t, 7,
+		testutil.ToFloat64(consumerLag.WithLabelValues("file", "gophprofile.profile.v1")), 0.001)
+}
+
+func TestConsumerLagOfOneGroupLeavesAnotherAlone(t *testing.T) {
+	// Arrange
+	consumerLag.Reset()
+
+	SetConsumerLag("file", []ConsumerLag{{Topic: "gophprofile.profile.v1", Lag: 5}})
+	SetConsumerLag("profile", []ConsumerLag{{Topic: "gophprofile.file.v1", Lag: 11}})
+
+	// Act
+	SetConsumerLag("file", []ConsumerLag{{Topic: "gophprofile.profile.v1", Lag: 6}})
+
+	// Assert
+	assert.InDelta(t, 11,
+		testutil.ToFloat64(consumerLag.WithLabelValues("profile", "gophprofile.file.v1")), 0.001,
+		"сброс по группе не должен задевать чужие серии: Reset на весь вектор это и сделал бы")
+	assert.InDelta(t, 6,
+		testutil.ToFloat64(consumerLag.WithLabelValues("file", "gophprofile.profile.v1")), 0.001)
+}
+
+func TestConsumerLagDropsAGroupThatDisappeared(t *testing.T) {
+	// Arrange
+	consumerLag.Reset()
+
+	SetConsumerLag("file", []ConsumerLag{{Topic: "gophprofile.profile.v1", Lag: 3}})
+
+	// Act
+	SetConsumerLag("file", nil)
+
+	// Assert
+	assert.Equal(t, 0, testutil.CollectAndCount(consumerLag),
+		"консьюмер, которого брокер больше не знает, не должен оставлять по себе лаг")
 }
 
 func TestInitOutboxMakesTheFirstEventVisibleToIncrease(t *testing.T) {

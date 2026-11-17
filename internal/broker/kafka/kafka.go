@@ -160,6 +160,8 @@ func (c *Consumer) ObserveLag(ctx context.Context) error {
 
 	described, found := lags[c.group]
 	if !found {
+		metrics.SetConsumerLag(c.group, nil)
+
 		return nil
 	}
 
@@ -167,9 +169,14 @@ func (c *Consumer) ObserveLag(ctx context.Context) error {
 		return fmt.Errorf("lag of %s: %w", c.group, err)
 	}
 
-	for topic, lag := range described.Lag.TotalByTopic() {
-		metrics.SetConsumerLag(c.group, topic, lag.Lag)
+	byTopic := described.Lag.TotalByTopic()
+	observed := make([]metrics.ConsumerLag, 0, len(byTopic))
+
+	for topic, lag := range byTopic {
+		observed = append(observed, metrics.ConsumerLag{Topic: topic, Lag: lag.Lag})
 	}
+
+	metrics.SetConsumerLag(c.group, observed)
 
 	return nil
 }
