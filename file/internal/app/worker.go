@@ -20,7 +20,6 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
-	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
@@ -76,17 +75,7 @@ func BuildWorker(
 
 	closers = append(closers, pool.Close)
 
-	if err := metrics.RegisterPool("postgres", func() metrics.PoolStats {
-		stat := pool.Stat()
-
-		return metrics.PoolStats{
-			Acquired:      stat.AcquiredConns(),
-			Idle:          stat.IdleConns(),
-			Total:         stat.TotalConns(),
-			Max:           stat.MaxConns(),
-			EmptyAcquires: stat.EmptyAcquireCount(),
-		}
-	}); err != nil {
+	if err := pgtx.ObservePool("postgres", pool); err != nil {
 		return fail(fmt.Errorf("observe the postgres pool: %w", err))
 	}
 
@@ -318,25 +307,7 @@ func BuildWorker(
 				return err
 			}
 
-			usage := make([]metrics.StorageUsage, 0, len(result.Usage))
-			for _, entry := range result.Usage {
-				usage = append(usage, metrics.StorageUsage{
-					Kind:    entry.Kind,
-					Bytes:   entry.Bytes,
-					Objects: entry.Objects,
-				})
-			}
-
-			counts := make([]metrics.FileCount, 0, len(result.Counts))
-			for _, entry := range result.Counts {
-				counts = append(counts, metrics.FileCount{
-					Status: entry.Status,
-					Count:  entry.Count,
-				})
-			}
-
-			metrics.SetStorageUsage(usage)
-			metrics.SetFileCounts(counts)
+			reportStorage(result)
 
 			return nil
 		})
