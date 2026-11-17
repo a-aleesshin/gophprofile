@@ -1,0 +1,136 @@
+openapi: 3.0.3
+
+info:
+  title: GophProfile content
+  version: "1.0.0"
+  description: |
+    Публичная раздача содержимого файлового сервиса.
+
+    Адрес постоянный: по нему всегда лежит один и тот же байтовый результат,
+    поэтому ответ разрешено кешировать надолго. Меняющиеся сущности — «текущая
+    аватарка пользователя» и «аватарка по email» — живут в другом сервисе и
+    отвечают редиректом сюда.
+
+    Хранилище закрыто: анонимного чтения и прямых ссылок на него нет, байты
+    отдаёт этот сервис.
+
+servers:
+  - url: http://localhost:8000
+    description: Локальный запуск через docker compose
+
+paths:
+  /upload/{file_id}/{object}:
+    get:
+      operationId: serveVariant
+      security: []
+      summary: Отдать вариант файла
+      description: |
+        `object` — это имя варианта и расширение, например `300x300.jpg`.
+
+        Для закрытых пространств имён ссылка подписывается: параметры `exp` и
+        `sig` обязательны, без них ответ 404, а не 403 — существование файла по
+        неподписанной ссылке не раскрывается.
+
+        Поддерживается условный запрос: с `If-None-Match`, совпавшим с `ETag`,
+        ответ 304 без тела.
+      parameters:
+        - name: file_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: object
+          in: path
+          required: true
+          description: Имя варианта с расширением.
+          schema:
+            type: string
+          example: 300x300.jpg
+        - name: exp
+          in: query
+          description: Время истечения подписи, секунды Unix. Только для подписанных ссылок.
+          schema:
+            type: string
+        - name: sig
+          in: query
+          description: Подпись ссылки. Только для подписанных ссылок.
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          description: Значение `ETag` из предыдущего ответа.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Байты варианта
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              description: Берётся из политики пространства имён.
+              schema:
+                type: string
+            Content-Disposition:
+              description: Присутствует, если политика требует скачивания вместо показа.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: Всегда `nosniff`.
+              schema:
+                type: string
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "304":
+          description: Не изменилось с прошлого запроса
+        "403":
+          description: Подпись не сошлась
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: bad_signature
+        "404":
+          description: |
+            Файла нет, вариант не существует, имя разобрать не удалось — либо
+            ссылка на закрытое пространство имён пришла без подписи.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: not_found
+        "410":
+          description: Срок действия подписанной ссылки истёк
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: link_expired
+
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [not_found, bad_signature, link_expired, internal]
+        details:
+          type: string
