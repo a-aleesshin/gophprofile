@@ -1,0 +1,43 @@
+{{- if .Values.ingress.enabled }}
+{{- range $route, $spec := .Values.ingress.routes }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-%s" (include "gophprofile.fullname" $) $route | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{ include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ printf "ingress-%s" $route }}
+  {{- with $spec.annotations }}
+  annotations:
+    {{ toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ $.Values.ingress.className }}
+  {{- if $.Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required when TLS is on" $.Values.ingress.host | quote }}
+      secretName: {{ required "ingress.tls.secretName is required when TLS is on" $.Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - {{ with $.Values.ingress.host }}host: {{ . | quote }}
+      {{ end }}http:
+        paths:
+          {{- range $spec.paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                {{- if .component }}
+                name: {{ include "gophprofile.componentName" (dict "root" $ "component" .component) }}
+                port:
+                  name: {{ .port }}
+                {{- else }}
+                name: {{ .service }}
+                port:
+                  number: {{ .port }}
+                {{- end }}
+          {{- end }}
+{{- end }}
+{{- end }}

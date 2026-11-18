@@ -1,0 +1,68 @@
+{{- range $service, $spec := .Values.services }}
+{{- if $spec.migrate }}
+{{- $name := printf "%s-%s-migrate" (include "gophprofile.fullname" $) $service | trunc 63 | trimSuffix "-" }}
+{{- $envSecret := $spec.existingSecret | default $name }}
+{{- if not $spec.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{ include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ printf "%s-migrate" $service }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+type: Opaque
+stringData:
+  POSTGRES_DSN: {{ required (printf "services.%s.secretEnv.POSTGRES_DSN is required" $service) (dig "secretEnv" "POSTGRES_DSN" "" $spec) | quote }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ printf "%s-migrate" $service }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        {{- include "gophprofile.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ printf "%s-migrate" $service }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "gophprofile.image" (dict "root" $ "repository" $spec.repository) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["migrate"]
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: LOG_LEVEL
+              value: {{ dig "env" "LOG_LEVEL" "info" $spec | quote }}
+            - name: LOG_FORMAT
+              value: {{ dig "env" "LOG_FORMAT" "json" $spec | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ $envSecret }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+{{- end }}
+{{- end }}

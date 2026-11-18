@@ -1,0 +1,175 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $full := include "gophprofile.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-deny-all" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gophprofile
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-dns" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gophprofile
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.dnsNamespace }}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-edge" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [file-server, profile-server, web]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressControllerNamespace }}
+      ports:
+        - port: http
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-internal-grpc" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: file-server
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [profile-server, profile-worker]
+      ports:
+        - port: grpc
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-scrape" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gophprofile
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+      ports:
+        - port: metrics
+          protocol: TCP
+{{- with .Values.networkPolicy.probeCIDRs }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-probes" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gophprofile
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: health
+          protocol: TCP
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-allow-backends" $full | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: gophprofile
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    {{- with .Values.networkPolicy.depsPorts }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- toYaml $.Values.networkPolicy.depsSelector | nindent 14 }}
+      ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: file-server
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - port: grpc
+          protocol: TCP
+    {{- with .Values.networkPolicy.tracing }}
+    {{- if .enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+      ports:
+        - port: {{ .port }}
+          protocol: TCP
+    {{- end }}
+    {{- end }}
+  {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

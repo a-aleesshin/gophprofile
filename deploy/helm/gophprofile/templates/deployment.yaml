@@ -1,0 +1,79 @@
+{{- range $component, $workload := .Values.workloads }}
+{{- $spec := index $.Values.services $workload.service }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  {{- if not (dig "autoscaling" "enabled" false $workload) }}
+  replicas: {{ $workload.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "gophprofile.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gophprofile.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $component }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+    spec:
+      serviceAccountName: {{ default (include "gophprofile.fullname" $) $.Values.serviceAccount.name }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "gophprofile.image" (dict "root" $ "repository" $spec.repository) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: [{{ $workload.command | quote }}]
+          securityContext:
+            {{- toYaml $.Values.containerSecurityContext | nindent 12 }}
+          ports:
+            {{- range $name, $port := $workload.ports }}
+            - name: {{ $name }}
+              containerPort: {{ $port }}
+            {{- end }}
+          env:
+            {{- range $name, $port := $workload.ports }}
+            - name: {{ printf "%s_ADDR" (upper $name) }}
+              value: {{ printf ":%v" $port | quote }}
+            {{- end }}
+            {{- range $key, $value := $workload.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "gophprofile.configName" (dict "root" $ "service" $workload.service) }}
+            - secretRef:
+                name: {{ include "gophprofile.secretName" (dict "root" $ "service" $workload.service "spec" $spec) }}
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+            {{- toYaml $.Values.probes.startup | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+            {{- toYaml $.Values.probes.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+            {{- toYaml $.Values.probes.liveness | nindent 12 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ $.Values.preStopDelaySeconds }}
+          resources:
+            {{- toYaml $workload.resources | nindent 12 }}
+{{- end }}
