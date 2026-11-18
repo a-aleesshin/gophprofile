@@ -14,11 +14,15 @@ import (
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
+	"github.com/a-aleesshin/gophprofile/internal/breaker"
+	"github.com/a-aleesshin/gophprofile/internal/clock"
 )
 
 var ErrInTransaction = errors.New("object io must not run inside a database transaction")
 
 var ErrInvalidConfig = errors.New("invalid s3 config")
+
+const breakerName = "s3"
 
 type Config struct {
 	Endpoint   string `env:"ENDPOINT,required,notEmpty"`
@@ -28,6 +32,7 @@ type Config struct {
 	Bucket     string `env:"BUCKET,required,notEmpty"`
 	Region     string `env:"REGION" envDefault:"us-east-1"`
 	UseSSL     bool   `env:"USE_SSL" envDefault:"false"`
+	Breaker    breaker.Config
 }
 
 type TransactionGuard interface {
@@ -66,11 +71,16 @@ func New(cfg Config, guard TransactionGuard) (*Store, error) {
 		return nil, fmt.Errorf("build the object storage transport: %w", err)
 	}
 
+	circuit, err := breaker.New(breakerName, cfg.Breaker, clock.System{})
+	if err != nil {
+		return nil, fmt.Errorf("object storage: %w", err)
+	}
+
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: cfg.UseSSL,
 		Region: cfg.Region,
-		Transport: otelhttp.NewTransport(transport,
+		Transport: otelhttp.NewTransport(breaker.NewTransport(transport, circuit),
 			otelhttp.WithSpanNameFormatter(objectStorageCall)),
 	})
 	if err != nil {

@@ -103,6 +103,19 @@ groups:
         annotations:
           summary: Группа {{ $labels.group }} отстаёт на {{ $value }} сообщений
 
+      - alert: CircuitBreakerOpen
+        expr: max by (service, dependency) (gophprofile_circuit_breaker_state) == 2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: >-
+            {{ $labels.service }} разомкнул вызовы к {{ $labels.dependency }}
+          description: >-
+            Зависимость отвечала отказом столько раз подряд, что сервис перестал
+            её звать и отвечает отказом сразу. Пока размыкатель открыт, запросы,
+            которым нужна эта зависимость, не выполняются.
+
   - name: gophprofile-resources
     rules:
       - alert: DatabasePoolExhausted

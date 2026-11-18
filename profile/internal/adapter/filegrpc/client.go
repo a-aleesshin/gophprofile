@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	filev1 "github.com/a-aleesshin/gophprofile/file/gen/file/v1"
+	"github.com/a-aleesshin/gophprofile/internal/breaker"
+	"github.com/a-aleesshin/gophprofile/internal/clock"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
 
@@ -21,6 +23,8 @@ const (
 
 	authorizationKey = "authorization"
 	bearerPrefix     = "Bearer "
+
+	breakerName = "file"
 )
 
 const retryPolicy = `{
@@ -40,6 +44,7 @@ type Config struct {
 	Addr    string        `env:"ADDR,required,notEmpty"`
 	Token   string        `env:"TOKEN,required,notEmpty"`
 	Timeout time.Duration `env:"TIMEOUT" envDefault:"5s"`
+	Breaker breaker.Config
 }
 
 type Client struct {
@@ -59,11 +64,17 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("%w: timeout must be positive", ErrInvalidConfig)
 	}
 
+	guard, err := breaker.New(breakerName, cfg.Breaker, clock.System{})
+	if err != nil {
+		return nil, fmt.Errorf("file client: %w", err)
+	}
+
 	conn, err := grpc.NewClient(cfg.Addr,
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(retryPolicy),
-		grpc.WithChainUnaryInterceptor(authorize(cfg.Token), deadline(cfg.Timeout)),
+		grpc.WithChainUnaryInterceptor(
+			protect(guard), authorize(cfg.Token), deadline(cfg.Timeout)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("file client: dial %s: %w", cfg.Addr, err)

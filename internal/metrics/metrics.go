@@ -109,6 +109,18 @@ var (
 		Help:      "How long a call took, by kind and method.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"kind", "method"})
+
+	breakerState = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Name:      "circuit_breaker_state",
+		Help:      "Circuit breaker state by dependency: 0 closed, 1 half-open, 2 open.",
+	}, []string{"dependency"})
+
+	breakerRejected = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "circuit_breaker_rejected_total",
+		Help:      "Calls refused by an open circuit breaker, by dependency.",
+	}, []string{"dependency"})
 )
 
 const (
@@ -128,6 +140,19 @@ func InitOutbox(transport string) {
 	outboxPublished.WithLabelValues(transport).Add(0)
 	outboxFailures.WithLabelValues(transport).Add(0)
 	outboxParked.WithLabelValues(transport).Add(0)
+}
+
+func InitBreaker(dependency string) {
+	breakerState.WithLabelValues(dependency).Set(0)
+	breakerRejected.WithLabelValues(dependency).Add(0)
+}
+
+func SetBreakerState(dependency string, state float64) {
+	breakerState.WithLabelValues(dependency).Set(state)
+}
+
+func ObserveBreakerRejection(dependency string) {
+	breakerRejected.WithLabelValues(dependency).Inc()
 }
 
 func InitInbox(consumer string) {
