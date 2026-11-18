@@ -6,7 +6,13 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const tracerName = "github.com/a-aleesshin/gophprofile/internal/worker"
 
 var ErrInvalidJob = errors.New("invalid periodic job")
 
@@ -15,6 +21,7 @@ type Job struct {
 	interval time.Duration
 	run      func(ctx context.Context) error
 	logger   *slog.Logger
+	tracer   trace.Tracer
 }
 
 func Every(
@@ -34,7 +41,28 @@ func Every(
 		return nil, fmt.Errorf("%w: nothing to run", ErrInvalidJob)
 	}
 
-	return &Job{name: name, interval: interval, run: run, logger: logger}, nil
+	return &Job{
+		name:     name,
+		interval: interval,
+		run:      run,
+		logger:   logger,
+		tracer:   otel.Tracer(tracerName),
+	}, nil
+}
+
+func (j *Job) once(ctx context.Context) error {
+	ctx, span := j.tracer.Start(ctx, "job "+j.name, trace.WithSpanKind(trace.SpanKindInternal))
+
+	defer span.End()
+
+	err := j.run(ctx)
+
+	if err != nil && span.IsRecording() {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	return err
 }
 
 func (j *Job) Run(ctx context.Context) error {
@@ -43,12 +71,12 @@ func (j *Job) Run(ctx context.Context) error {
 	defer timer.Stop()
 
 	for {
-		if err := j.run(ctx); err != nil {
+		if err := j.once(ctx); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 
-			j.logger.Error("periodic job failed", "job", j.name, "error", err)
+			j.logger.ErrorContext(ctx, "periodic job failed", "job", j.name, "error", err)
 		}
 
 		timer.Reset(j.interval)

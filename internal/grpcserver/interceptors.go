@@ -28,8 +28,13 @@ func exempt(method string) bool {
 	return strings.HasPrefix(method, healthPrefix)
 }
 
-func reportPanic(logger *slog.Logger, method string, recovered any) error {
-	logger.Error("a grpc handler panicked",
+func reportPanic(
+	ctx context.Context,
+	logger *slog.Logger,
+	method string,
+	recovered any,
+) error {
+	logger.ErrorContext(ctx, "a grpc handler panicked",
 		"method", method,
 		"panic", fmt.Sprint(recovered),
 		"stack", string(debug.Stack()))
@@ -55,7 +60,13 @@ func verify(ctx context.Context, expected []byte) error {
 	return nil
 }
 
-func observe(logger *slog.Logger, kind, method string, took time.Duration, err error) {
+func observe(
+	ctx context.Context,
+	logger *slog.Logger,
+	kind, method string,
+	took time.Duration,
+	err error,
+) {
 	code := status.Code(err).String()
 
 	metrics.ObserveGRPCCall(kind, method, code, took)
@@ -68,12 +79,12 @@ func observe(logger *slog.Logger, kind, method string, took time.Duration, err e
 	}
 
 	if err != nil {
-		logger.Error("grpc call failed", append(attrs, "error", err.Error())...)
+		logger.ErrorContext(ctx, "grpc call failed", append(attrs, "error", err.Error())...)
 
 		return
 	}
 
-	logger.Debug("grpc call served", attrs...)
+	logger.DebugContext(ctx, "grpc call served", attrs...)
 }
 
 func recovery(logger *slog.Logger) grpc.UnaryServerInterceptor {
@@ -85,7 +96,7 @@ func recovery(logger *slog.Logger) grpc.UnaryServerInterceptor {
 	) (response any, err error) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				response, err = nil, reportPanic(logger, info.FullMethod, recovered)
+				response, err = nil, reportPanic(ctx, logger, info.FullMethod, recovered)
 			}
 		}()
 
@@ -102,7 +113,7 @@ func recoveryStream(logger *slog.Logger) grpc.StreamServerInterceptor {
 	) (err error) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				err = reportPanic(logger, info.FullMethod, recovered)
+				err = reportPanic(stream.Context(), logger, info.FullMethod, recovered)
 			}
 		}()
 
@@ -125,7 +136,7 @@ func logging(logger *slog.Logger) grpc.UnaryServerInterceptor {
 
 		response, err := handler(ctx, request)
 
-		observe(logger, metrics.KindUnary, info.FullMethod, time.Since(started), err)
+		observe(ctx, logger, metrics.KindUnary, info.FullMethod, time.Since(started), err)
 
 		return response, err
 	}
@@ -146,7 +157,8 @@ func loggingStream(logger *slog.Logger) grpc.StreamServerInterceptor {
 
 		err := handler(service, stream)
 
-		observe(logger, metrics.KindStream, info.FullMethod, time.Since(started), err)
+		observe(stream.Context(), logger, metrics.KindStream,
+			info.FullMethod, time.Since(started), err)
 
 		return err
 	}

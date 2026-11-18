@@ -224,6 +224,7 @@ func workerConfig(t *testing.T) config.Worker {
 		},
 		Jobs: config.Jobs{
 			BacklogInterval:   200 * time.Millisecond,
+			StorageInterval:   200 * time.Millisecond,
 			ReconcileInterval: time.Minute,
 			ReconcileLimit:    10,
 			ReconcileAttempts: 10,

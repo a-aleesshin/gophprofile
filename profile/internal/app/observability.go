@@ -5,7 +5,16 @@ import (
 	"net/http/pprof"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
+	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
+
+func observeOutcomes(outcomes []usecase.AvatarOutcome) {
+	for _, outcome := range outcomes {
+		metrics.ObserveAvatarUpload(outcome.Status.String(), outcome.Took)
+	}
+}
 
 func metricsHandler() http.Handler {
 	mux := http.NewServeMux()

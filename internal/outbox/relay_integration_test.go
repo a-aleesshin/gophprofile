@@ -4,8 +4,10 @@ package outbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"log/slog"
 	"os"
 	"testing"
@@ -15,6 +17,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/file/migrations"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -1483,4 +1490,226 @@ func TestPrunerLeavesAParkedRowAlonePastThePublishedWindow(t *testing.T) {
 		"the published window must not reach a row that was never published")
 	assert.Zero(t, removed.Parked)
 	assert.True(t, rowExists(t, parked))
+}
+
+func TestWriteStoresTheTraceOfItsCaller(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	previous := otel.GetTextMapPropagator()
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+
+	provider := sdktrace.NewTracerProvider()
+
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	ctx, span := provider.Tracer("test").Start(t.Context(), "request")
+
+	writer := NewWriter(sharedDB, clock.System{})
+
+	// Act
+	require.NoError(t, writer.Write(ctx, Message{
+		Transport:    TransportKafka,
+		Destination:  "gophprofile.file.v1",
+		PartitionKey: "file-1",
+		Type:         "FileProcessed",
+		Data:         map[string]string{"file_id": "x"},
+	}))
+
+	span.End()
+
+	// Assert
+	var payload []byte
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT payload FROM outbox ORDER BY id DESC LIMIT 1`).Scan(&payload))
+
+	var envelope Envelope
+	require.NoError(t, json.Unmarshal(payload, &envelope))
+
+	require.Contains(t, envelope.Trace, "traceparent",
+		"the row outlives the request, so the only place the cause can survive is the payload")
+	assert.Contains(t, envelope.Trace["traceparent"],
+		span.SpanContext().TraceID().String())
+
+	parent := trace.SpanContextFromContext(envelope.Context(context.Background()))
+	require.True(t, parent.IsValid())
+	assert.Equal(t, span.SpanContext().TraceID(), parent.TraceID())
+	assert.Equal(t, span.SpanContext().SpanID(), parent.SpanID())
+}
+
+func TestATickThatPublishesNestsThePublishUnderIt(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	now := time.Now().UTC()
+	insertPending(t, TransportKafka, "file-1", 0, now.Add(-time.Minute))
+
+	relay := testRelay(t, TransportKafka, &recordingSender{}, now, nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Published)
+
+	// Assert
+	byName := make(map[string]sdktrace.ReadOnlySpan, 2)
+	for _, span := range recorder.Ended() {
+		byName[span.Name()] = span
+	}
+
+	tick, found := byName["outbox tick kafka"]
+	require.True(t, found)
+
+	publish, found := byName["outbox publish kafka"]
+	require.True(t, found)
+
+	assert.Equal(t, tick.SpanContext().SpanID(), publish.Parent().SpanID(),
+		"the tick is the unit of work; sending is one phase of it, alongside leasing and settling")
+	assert.Equal(t, trace.SpanKindProducer, publish.SpanKind())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(tick.Attributes()))
+	for _, kv := range tick.Attributes() {
+		attributes[kv.Key] = kv.Value
+	}
+
+	assert.Equal(t, "kafka", attributes["messaging.system"].AsString())
+	assert.Equal(t, int64(1), attributes["messaging.published"].AsInt64())
+	assert.Equal(t, int64(0), attributes["messaging.parked"].AsInt64())
+}
+
+func TestAnIdleTickStillGetsItsOwnSpan(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	relay := testRelay(t, TransportKafka, &recordingSender{}, time.Now().UTC(), nil)
+
+	// Act
+	stats, err := relay.Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Equal(t, RelayStats{}, stats)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1,
+		"an idle tick still runs the lease query, so the trace exists either way; "+
+			"the span is what gives it a name instead of a bare SELECT")
+
+	assert.Equal(t, "outbox tick kafka", spans[0].Name())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(spans[0].Attributes()))
+	for _, kv := range spans[0].Attributes() {
+		attributes[kv.Key] = kv.Value
+	}
+
+	assert.Equal(t, int64(0), attributes["messaging.batch.message_count"].AsInt64(),
+		"a named tick with a zero count is how an idle relay looks, and that is readable")
+}
+
+func TestATickCarriesEachRowBackIntoTheTraceThatWroteIt(t *testing.T) {
+	// Arrange
+	resetOutbox(t)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	now := time.Now().UTC()
+
+	requestCtx, requestSpan := provider.Tracer("test").Start(t.Context(), "request")
+
+	require.NoError(t, NewWriter(sharedDB, clock.Fixed{At: now.Add(-time.Minute)}).
+		Write(requestCtx, Message{
+			Transport:    TransportKafka,
+			Destination:  "gophprofile.file.v1",
+			PartitionKey: "file-1",
+			Type:         "FileProcessed",
+			Data:         map[string]string{"file_id": "x"},
+		}))
+
+	requestSpan.End()
+
+	sender := &recordingSender{}
+
+	// Act
+	stats, err := testRelay(t, TransportKafka, sender, now, nil).Tick(t.Context())
+
+	// Assert
+	require.NoError(t, err)
+	require.Equal(t, 1, stats.Published)
+
+	var sendSpan sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.Name() == "send gophprofile.file.v1" {
+			sendSpan = span
+
+			break
+		}
+	}
+
+	require.NotNil(t, sendSpan,
+		"the row leaves the process here, so this is the hop a trace cannot be missing")
+	assert.Equal(t, requestSpan.SpanContext().TraceID(), sendSpan.SpanContext().TraceID(),
+		"the request, the send and the handler have to read as one trace")
+	assert.Equal(t, requestSpan.SpanContext().SpanID(), sendSpan.Parent().SpanID())
+
+	require.Len(t, sender.sent, 1)
+
+	var delivered Envelope
+	require.NoError(t, json.Unmarshal(sender.sent[0].Payload, &delivered))
+
+	onTheWire := trace.SpanContextFromContext(delivered.Context(context.Background()))
+
+	assert.Equal(t, sendSpan.SpanContext().SpanID(), onTheWire.SpanID(),
+		"the payload on the wire has to name the send, not the request before it")
+
+	var kept []byte
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(),
+		`SELECT payload FROM outbox ORDER BY id DESC LIMIT 1`).Scan(&kept))
+
+	var stored Envelope
+	require.NoError(t, json.Unmarshal(kept, &stored))
+
+	assert.Contains(t, stored.Trace["traceparent"],
+		requestSpan.SpanContext().SpanID().String(),
+		"the row keeps the request, so a retry hangs under it again instead of under a dead send")
 }

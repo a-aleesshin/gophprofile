@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/profile/internal/domain"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
@@ -76,18 +77,18 @@ func FactHandlers(
 	deleted deletedApplier,
 ) map[string]inbox.Handler {
 	return map[string]inbox.Handler{
-		TypeFileProcessed: inbox.Transactional(
-			func(ctx context.Context, message outbox.Envelope) error {
+		TypeFileProcessed: inbox.TransactionalSettling(
+			func(ctx context.Context, message outbox.Envelope) (func(), error) {
 				var data fileProcessedData
 
 				if err := json.Unmarshal(message.Data, &data); err != nil {
-					return fmt.Errorf("%w: decode %s: %w",
+					return nil, fmt.Errorf("%w: decode %s: %w",
 						inbox.ErrUnprocessable, message.Type, err)
 				}
 
 				fileID, err := domain.ParseFileRef(data.FileID)
 				if err != nil {
-					return fmt.Errorf("%w: file id: %w", inbox.ErrUnprocessable, err)
+					return nil, fmt.Errorf("%w: file id: %w", inbox.ErrUnprocessable, err)
 				}
 
 				snapshot, err := domain.NewFileSnapshot(domain.NewFileSnapshotParams{
@@ -98,7 +99,7 @@ func FactHandlers(
 					Height:    data.Height,
 				})
 				if err != nil {
-					return fmt.Errorf("%w: snapshot: %w", inbox.ErrUnprocessable, err)
+					return nil, fmt.Errorf("%w: snapshot: %w", inbox.ErrUnprocessable, err)
 				}
 
 				variants := make([]domain.Variant, 0, len(data.Variants))
@@ -116,7 +117,7 @@ func FactHandlers(
 						Height:   stored.Height,
 					})
 					if variantErr != nil {
-						return fmt.Errorf("%w: variant %q: %w",
+						return nil, fmt.Errorf("%w: variant %q: %w",
 							inbox.ErrUnprocessable, stored.Name, variantErr)
 					}
 
@@ -124,44 +125,50 @@ func FactHandlers(
 				}
 
 				if len(variants) == 0 {
-					return fmt.Errorf("%w: %s carries no servable variant",
+					return nil, fmt.Errorf("%w: %s carries no servable variant",
 						inbox.ErrUnprocessable, message.Type)
 				}
 
-				_, err = processed.Handle(ctx, usecase.FileProcessedFact{
+				result, err := processed.Handle(ctx, usecase.FileProcessedFact{
 					FileID:   fileID,
 					Snapshot: snapshot,
 					Variants: variants,
 				})
+				if err != nil {
+					return nil, unprocessableIfPermanent(err)
+				}
 
-				return unprocessableIfPermanent(err)
+				return uploadObserver(result), nil
 			}),
 
-		TypeFileRejected: inbox.Transactional(
-			func(ctx context.Context, message outbox.Envelope) error {
+		TypeFileRejected: inbox.TransactionalSettling(
+			func(ctx context.Context, message outbox.Envelope) (func(), error) {
 				var data fileRejectedData
 
 				if err := json.Unmarshal(message.Data, &data); err != nil {
-					return fmt.Errorf("%w: decode %s: %w",
+					return nil, fmt.Errorf("%w: decode %s: %w",
 						inbox.ErrUnprocessable, message.Type, err)
 				}
 
 				fileID, err := domain.ParseFileRef(data.FileID)
 				if err != nil {
-					return fmt.Errorf("%w: file id: %w", inbox.ErrUnprocessable, err)
+					return nil, fmt.Errorf("%w: file id: %w", inbox.ErrUnprocessable, err)
 				}
 
 				if data.Reason == "" {
-					return fmt.Errorf("%w: %s carries no reason",
+					return nil, fmt.Errorf("%w: %s carries no reason",
 						inbox.ErrUnprocessable, message.Type)
 				}
 
-				_, err = rejected.Handle(ctx, usecase.FileRejectedFact{
+				result, err := rejected.Handle(ctx, usecase.FileRejectedFact{
 					FileID: fileID,
 					Reason: data.Reason,
 				})
+				if err != nil {
+					return nil, unprocessableIfPermanent(err)
+				}
 
-				return unprocessableIfPermanent(err)
+				return uploadObserver(result), nil
 			}),
 
 		TypeFileDeleted: inbox.Transactional(
@@ -182,6 +189,17 @@ func FactHandlers(
 
 				return unprocessableIfPermanent(err)
 			}),
+	}
+}
+
+func uploadObserver(result usecase.ApplyFactResult) func() {
+	outcome, reached := result.Outcome()
+	if !reached {
+		return nil
+	}
+
+	return func() {
+		metrics.ObserveAvatarUpload(outcome.Status.String(), outcome.Took)
 	}
 }
 

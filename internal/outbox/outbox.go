@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
@@ -32,10 +36,22 @@ type Clock interface {
 }
 
 type Envelope struct {
-	MessageID  uuid.UUID       `json:"message_id"`
-	Type       string          `json:"type"`
-	OccurredAt time.Time       `json:"occurred_at"`
-	Data       json.RawMessage `json:"data"`
+	MessageID  uuid.UUID         `json:"message_id"`
+	Type       string            `json:"type"`
+	OccurredAt time.Time         `json:"occurred_at"`
+	Trace      map[string]string `json:"trace,omitempty"`
+	Data       json.RawMessage   `json:"data"`
+}
+
+func messagingSystem(transport string) attribute.KeyValue {
+	switch transport {
+	case TransportKafka:
+		return semconv.MessagingSystemKafka
+	case TransportRabbit:
+		return semconv.MessagingSystemRabbitMQ
+	default:
+		return semconv.MessagingSystemKey.String(transport)
+	}
 }
 
 type Writer struct {
@@ -64,10 +80,15 @@ func (w *Writer) Write(ctx context.Context, message Message) error {
 		return fmt.Errorf("marshal %s data: %w", message.Type, err)
 	}
 
+	carrier := propagation.MapCarrier{}
+
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
 	payload, err := json.Marshal(Envelope{
 		MessageID:  uuid.New(),
 		Type:       message.Type,
 		OccurredAt: w.clock.Now(),
+		Trace:      carrier,
 		Data:       data,
 	})
 	if err != nil {

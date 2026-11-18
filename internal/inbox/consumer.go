@@ -7,10 +7,17 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 )
+
+const tracerName = "github.com/a-aleesshin/gophprofile/internal/inbox"
 
 var (
 	ErrInvalidConsumer = errors.New("invalid consumer")
@@ -28,21 +35,37 @@ type Source interface {
 	Fetch(ctx context.Context) ([]Delivery, error)
 }
 
+type Run func(ctx context.Context, message outbox.Envelope) error
+
+type RunSettling func(ctx context.Context, message outbox.Envelope) (func(), error)
+
 type Handler struct {
-	run           func(ctx context.Context, message outbox.Envelope) error
+	run           RunSettling
 	transactional bool
 }
 
 func (h Handler) Run(ctx context.Context, message outbox.Envelope) error {
-	return h.run(ctx, message)
+	_, err := h.run(ctx, message)
+
+	return err
 }
 
-func Repeatable(run func(ctx context.Context, message outbox.Envelope) error) Handler {
-	return Handler{run: run}
+func Repeatable(run Run) Handler {
+	return Handler{run: settlingNothing(run)}
 }
 
-func Transactional(run func(ctx context.Context, message outbox.Envelope) error) Handler {
+func Transactional(run Run) Handler {
+	return Handler{run: settlingNothing(run), transactional: true}
+}
+
+func TransactionalSettling(run RunSettling) Handler {
 	return Handler{run: run, transactional: true}
+}
+
+func settlingNothing(run Run) RunSettling {
+	return func(ctx context.Context, message outbox.Envelope) (func(), error) {
+		return nil, run(ctx, message)
+	}
 }
 
 type ConsumerConfig struct {
@@ -62,6 +85,7 @@ type Consumer struct {
 	source      Source
 	inbox       *Inbox
 	handlers    map[string]Handler
+	tracer      trace.Tracer
 	maxAttempts int
 }
 
@@ -104,11 +128,14 @@ func NewConsumer(
 		routes[messageType] = handler
 	}
 
+	metrics.InitInbox(name)
+
 	return &Consumer{
 		name:        name,
 		source:      source,
 		inbox:       in,
 		handlers:    routes,
+		tracer:      otel.Tracer(tracerName),
 		maxAttempts: maxAttempts,
 	}, nil
 }
@@ -151,19 +178,50 @@ func (c *Consumer) Consume(ctx context.Context) (Stats, error) {
 			continue
 		}
 
-		effect := func(ctx context.Context) error { return handler.run(ctx, envelope) }
+		var settled func()
+
+		effect := func(ctx context.Context) error {
+			var runErr error
+
+			settled, runErr = handler.run(ctx, envelope)
+
+			return runErr
+		}
 
 		var (
 			applied bool
 			err     error
 		)
 
+		handled, span := c.tracer.Start(envelope.Context(ctx), "process "+envelope.Type,
+			trace.WithSpanKind(trace.SpanKindConsumer),
+			trace.WithAttributes(
+				semconv.MessagingOperationTypeProcess,
+				semconv.MessagingDestinationName(c.name),
+				semconv.MessagingMessageID(envelope.MessageID.String()),
+			))
+
 		if handler.transactional {
-			applied, err = c.inbox.Once(ctx, c.name, envelope.MessageID, effect)
+			applied, err = c.inbox.Once(handled, c.name, envelope.MessageID, effect)
 		} else {
 			applied, err = c.inbox.OnceOutsideTransaction(
-				ctx, c.name, envelope.MessageID, effect)
+				handled, c.name, envelope.MessageID, effect)
 		}
+
+		if applied && err == nil && settled != nil {
+			settled()
+		}
+
+		if span.IsRecording() {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			}
+
+			span.SetAttributes(attribute.Bool("inbox.applied", applied))
+		}
+
+		span.End()
 
 		if err != nil {
 			if ctx.Err() != nil {

@@ -337,3 +337,59 @@ func scanFile(row pgx.Row) (domain.File, error) {
 
 	return domain.RestoreFile(params)
 }
+
+func (r *Files) StorageUsage(ctx context.Context) ([]usecase.StorageUsage, error) {
+	rows, err := r.db.Querier(ctx).Query(ctx, `
+		SELECT CASE WHEN v.name = 'original' THEN 'original' ELSE 'variant' END AS kind,
+		       coalesce(sum(v.size_bytes), 0) AS bytes,
+		       count(*) AS objects
+		  FROM file_variants v
+		  JOIN files f ON f.id = v.file_id
+		 WHERE f.status = 'ready'
+		 GROUP BY 1`)
+	if err != nil {
+		return nil, fmt.Errorf("select storage usage: %w", err)
+	}
+
+	defer rows.Close()
+
+	usage, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (usecase.StorageUsage, error) {
+		var entry usecase.StorageUsage
+
+		if err := row.Scan(&entry.Kind, &entry.Bytes, &entry.Objects); err != nil {
+			return usecase.StorageUsage{}, err
+		}
+
+		return entry, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read storage usage: %w", err)
+	}
+
+	return usage, nil
+}
+
+func (r *Files) CountByStatus(ctx context.Context) ([]usecase.StatusCount, error) {
+	rows, err := r.db.Querier(ctx).Query(ctx, `
+		SELECT status, count(*) FROM files GROUP BY status`)
+	if err != nil {
+		return nil, fmt.Errorf("select file counts: %w", err)
+	}
+
+	defer rows.Close()
+
+	counts, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (usecase.StatusCount, error) {
+		var entry usecase.StatusCount
+
+		if err := row.Scan(&entry.Status, &entry.Count); err != nil {
+			return usecase.StatusCount{}, err
+		}
+
+		return entry, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read file counts: %w", err)
+	}
+
+	return counts, nil
+}

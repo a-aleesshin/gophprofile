@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -12,6 +13,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func captureLogs() (*slog.Logger, *bytes.Buffer) {
@@ -362,4 +368,99 @@ func TestRecorderLetsTheResponseControllerThrough(t *testing.T) {
 	require.NoError(t, err,
 		"without Unwrap the controller cannot see the real writer and reports ErrNotSupported")
 	assert.True(t, inner.Flushed)
+}
+
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previousProvider := otel.GetTracerProvider()
+	previousPropagator := otel.GetTextMapPropagator()
+
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		otel.SetTextMapPropagator(previousPropagator)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	return recorder
+}
+
+func TestTraceNamesTheSpanAfterTheRoute(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	handler := Trace(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// Act
+	serve(handler, "/things/0193abcd-ef01-7a23-8b45-0123456789ab")
+
+	// Assert
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "GET /things/{id}", spans[0].Name(),
+		"the path carries an id, so naming spans after it gives Jaeger one operation per avatar")
+}
+
+func TestTraceHandsTheSpanToTheHandler(t *testing.T) {
+	// Arrange
+	recordSpans(t)
+
+	var seen trace.SpanContext
+
+	handler := Trace(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = trace.SpanFromContext(r.Context()).SpanContext()
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	// Act
+	serve(handler, "/things/7")
+
+	// Assert
+	assert.True(t, seen.IsValid(),
+		"everything downstream reads the span out of the request context")
+	assert.True(t, seen.IsSampled())
+}
+
+func TestTraceDoesNotLetACallerPickOurTraceID(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+
+	handler := Trace(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	const (
+		foreignTrace = "11111111111111111111111111111111"
+		foreignSpan  = "2222222222222222"
+	)
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /things/{id}", handler)
+
+	request := httptest.NewRequest(http.MethodGet, "/things/7", nil)
+	request.Header.Set("traceparent", "00-"+foreignTrace+"-"+foreignSpan+"-01")
+
+	// Act
+	mux.ServeHTTP(httptest.NewRecorder(), request)
+
+	// Assert
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+
+	assert.NotEqual(t, foreignTrace, spans[0].SpanContext().TraceID().String(),
+		"this endpoint faces the internet, so a caller must not be able to join or poison our traces")
+
+	require.Len(t, spans[0].Links(), 1,
+		"the incoming context is not trusted as a parent but it is not thrown away either")
+	assert.Equal(t, foreignTrace, spans[0].Links()[0].SpanContext.TraceID().String())
 }

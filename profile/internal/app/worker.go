@@ -10,6 +10,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/internal/worker"
@@ -26,6 +27,7 @@ const (
 	jobRecover     = "recover-stale-uploads"
 	jobFailStuck   = "fail-stuck-avatars"
 	jobBacklog     = "observe-outbox-backlog"
+	jobLag         = "observe-consumer-lag"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
 )
@@ -49,12 +51,25 @@ func BuildWorker(
 		return nil, nil, err
 	}
 
+	flushTraces, err := observability.StartTracing(ctx, cfg.Tracing,
+		observability.Identity{Service: "profile", Component: "worker"})
+	if err != nil {
+		return fail(fmt.Errorf("start tracing: %w", err))
+	}
+
+	closers = append(closers,
+		observability.CloseTracing(flushTraces, cfg.Tracing.Timeout, logger))
+
 	pool, err := pgtx.Connect(ctx, cfg.Postgres)
 	if err != nil {
 		return fail(fmt.Errorf("connect to postgres: %w", err))
 	}
 
 	closers = append(closers, pool.Close)
+
+	if err := pgtx.ObservePool("postgres", pool); err != nil {
+		return fail(fmt.Errorf("observe the postgres pool: %w", err))
+	}
 
 	db := pgtx.New(pool)
 
@@ -113,8 +128,10 @@ func BuildWorker(
 				return err
 			}
 
+			observeOutcomes(result.Outcomes)
+
 			if result.Recovered+result.Failed+result.Skipped > 0 {
-				logger.Info("recovered stale uploads",
+				logger.InfoContext(ctx, "recovered stale uploads",
 					"recovered", result.Recovered,
 					"failed", result.Failed,
 					"skipped", result.Skipped)
@@ -136,8 +153,10 @@ func BuildWorker(
 				return err
 			}
 
+			observeOutcomes(result.Outcomes)
+
 			if result.Failed+result.Skipped > 0 {
-				logger.Info("failed stuck avatars",
+				logger.InfoContext(ctx, "failed stuck avatars",
 					"failed", result.Failed,
 					"skipped", result.Skipped)
 			}
@@ -172,7 +191,7 @@ func BuildWorker(
 			}
 
 			if removed.Published > 0 || removed.Parked > 0 {
-				logger.Info("pruned outbox rows",
+				logger.InfoContext(ctx, "pruned outbox rows",
 					"published", removed.Published, "parked", removed.Parked)
 			}
 
@@ -190,7 +209,7 @@ func BuildWorker(
 			}
 
 			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
-				logger.Info("pruned inbox rows",
+				logger.InfoContext(ctx, "pruned inbox rows",
 					"processed", removed.Processed,
 					"failures", removed.Failures,
 					"dropped", removed.Dropped)
@@ -220,6 +239,11 @@ func BuildWorker(
 		return fail(fmt.Errorf("build metrics server: %w", err))
 	}
 
+	lagJob, err := worker.Every(jobLag, cfg.Jobs.BacklogInterval, logger, source.ObserveLag)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobLag, err))
+	}
+
 	runner := worker.New().
 		Add("kafka relay", relay).
 		Add("fact consumer", consumer).
@@ -228,6 +252,7 @@ func BuildWorker(
 		Add(jobFailStuck, failStuckJob).
 		Add(jobPruneOutbox, pruneOutboxJob).
 		Add(jobPruneInbox, pruneInboxJob).
+		Add(jobLag, lagJob).
 		Add("health server", healthServer).
 		Add("metrics server", metricsServer)
 

@@ -15,12 +15,14 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
 	"github.com/a-aleesshin/gophprofile/internal/logging"
+	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 )
 
 type Common struct {
 	Log      logging.Config
+	Tracing  observability.TracingConfig
 	Postgres pgtx.Config
 	S3       s3.Config
 	Policies policy.Config
@@ -34,6 +36,7 @@ type Jobs struct {
 	ReapLimit         int           `env:"REAP_LIMIT" envDefault:"100"`
 	ReapStaleAfter    time.Duration `env:"REAP_STALE_AFTER" envDefault:"15m"`
 	BacklogInterval   time.Duration `env:"BACKLOG_INTERVAL" envDefault:"15s"`
+	StorageInterval   time.Duration `env:"STORAGE_INTERVAL" envDefault:"2m"`
 	PruneInterval     time.Duration `env:"PRUNE_INTERVAL" envDefault:"1h"`
 }
 
@@ -57,6 +60,7 @@ type Worker struct {
 func loadCommon(dst *Common) error {
 	for _, section := range []func() error{
 		func() error { return config.LoadSection(&dst.Log, "LOG_") },
+		func() error { return config.LoadSection(&dst.Tracing, "TRACING_") },
 		func() error { return config.LoadSection(&dst.Postgres, "POSTGRES_") },
 		func() error { return config.LoadSection(&dst.S3, "S3_") },
 		func() error { return config.LoadSection(&dst.Policies, "POLICIES_") },

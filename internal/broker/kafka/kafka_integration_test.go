@@ -19,8 +19,11 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 var brokers []string
@@ -272,4 +275,63 @@ func TestUncommittedRecordComesBackAfterARestart(t *testing.T) {
 	// Assert
 	assert.JSONEq(t, `{"n":1}`, string(message.Body()),
 		"a record whose effect was never committed must be delivered again")
+}
+
+func TestObserveLagReportsWhatIsNotReadYet(t *testing.T) {
+	// Arrange
+	id := testRunID(t)
+	topic := testTopic(t, id)
+	group := "lag-group-" + id
+
+	cfg := Config{
+		Brokers:      brokers,
+		Topic:        topic,
+		Group:        group,
+		RetryBackoff: 10 * time.Millisecond,
+	}
+
+	producer, err := NewProducer(cfg, pgtx.New(nil))
+	require.NoError(t, err)
+
+	t.Cleanup(producer.Close)
+
+	consumer, err := NewConsumer(cfg)
+	require.NoError(t, err)
+
+	t.Cleanup(consumer.Close)
+
+	metrics.ConsumerLagForTest(group, topic).Set(-1)
+
+	for range 3 {
+		require.NoError(t, producer.Send(t.Context(), outbox.Pending{
+			Destination:  topic,
+			PartitionKey: "key",
+			Type:         "TestMessage",
+			Payload:      []byte(`{"x":1}`),
+		}))
+	}
+
+	// Act
+	deliveries, err := consumer.Fetch(t.Context())
+	require.NoError(t, err)
+	require.NotEmpty(t, deliveries)
+	require.NoError(t, deliveries[0].Ack(t.Context()))
+
+	// Assert
+	require.Eventually(t, func() bool {
+		if lagErr := consumer.ObserveLag(t.Context()); lagErr != nil {
+			return false
+		}
+
+		return metricValue(metrics.ConsumerLagForTest(group, topic)) >= 0
+	}, 20*time.Second, 300*time.Millisecond)
+
+	lag := metricValue(metrics.ConsumerLagForTest(group, topic))
+
+	assert.InDelta(t, 2, lag, 0.001,
+		"three produced, one committed, so two are still owed to this group")
+}
+
+func metricValue(gauge prometheus.Gauge) float64 {
+	return testutil.ToFloat64(gauge)
 }

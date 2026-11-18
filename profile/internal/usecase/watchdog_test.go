@@ -107,7 +107,7 @@ func TestRecoverStaleUploads_GivesUpOnlyWhenFileSaysSo(t *testing.T) {
 
 			// Assert
 			require.NoError(t, err)
-			assert.Equal(t, RecoverStaleUploadsResult{Failed: 1}, got)
+			assert.Equal(t, RecoverStaleUploadsResult{Failed: 1, Outcomes: failedOutcomes(1)}, got)
 
 			require.Len(t, avatars.saved, 1)
 			assert.True(t, avatars.saved[0].Status().Equal(domain.AvatarStatusFailed))
@@ -176,8 +176,9 @@ func TestRecoverStaleUploads_KeepsGoingPastASkippedRow(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, RecoverStaleUploadsResult{Skipped: 1, Failed: 1}, got,
-		"one undecidable row must not end the tick for the rest of the batch")
+	assert.Equal(t, RecoverStaleUploadsResult{
+		Skipped: 1, Failed: 1, Outcomes: failedOutcomes(1),
+	}, got, "one undecidable row must not end the tick for the rest of the batch")
 	assert.Equal(t, 2, uploads.calls)
 }
 
@@ -233,7 +234,7 @@ func TestRecoverStaleUploads_FailsAnAvatarWithNoTicketWithoutCallingFile(t *test
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, RecoverStaleUploadsResult{Failed: 1}, got)
+	assert.Equal(t, RecoverStaleUploadsResult{Failed: 1, Outcomes: failedOutcomes(1)}, got)
 	assert.Zero(t, uploads.calls, "there is no ticket to ask about")
 	assert.Equal(t, ReasonUploadUnknown, avatars.saved[0].FailedReason())
 }
@@ -256,7 +257,7 @@ func TestFailStuckAvatars_FailsWhatNoFactEverReachedUs(t *testing.T) {
 
 	// Assert
 	require.NoError(t, err)
-	assert.Equal(t, FailStuckAvatarsResult{Failed: 2}, got)
+	assert.Equal(t, FailStuckAvatarsResult{Failed: 2, Outcomes: failedOutcomes(2)}, got)
 
 	assert.True(t, avatars.staleStatus.Equal(domain.AvatarStatusProcessing),
 		"one status per sweep is what lets the index answer without a sort")
@@ -364,4 +365,88 @@ func TestWatchdogRejectsAnUnboundedCommand(t *testing.T) {
 				"a job without a threshold would rewrite the whole table every tick")
 		})
 	}
+}
+
+func failedOutcomes(count int) []AvatarOutcome {
+	outcomes := make([]AvatarOutcome, 0, count)
+
+	for range count {
+		outcomes = append(outcomes, AvatarOutcome{Status: domain.AvatarStatusFailed})
+	}
+
+	return outcomes
+}
+
+func TestFailStuckAvatarsReportsHowLongTheAvatarWaited(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	avatars := &stubAvatars{
+		stale: []domain.Avatar{testProcessingAvatar(t, testUserID(t, "user-1"))},
+	}
+
+	later := testNow.Add(42 * time.Minute)
+
+	// Act
+	got, err := NewFailStuckAvatarsHandler(avatars, &stubTransactor{}, fixedClock{now: later}).
+		Handle(context.Background(), FailStuckAvatarsCommand{
+			StaleAfter: 30 * time.Minute, Limit: 50,
+		})
+
+	// Assert
+	require.NoError(t, err)
+	require.Len(t, got.Outcomes, 1,
+		"a timeout is a terminal outcome, and the uploads metric is blind without it")
+	assert.True(t, got.Outcomes[0].Status.Equal(domain.AvatarStatusFailed))
+	assert.Equal(t, 42*time.Minute, got.Outcomes[0].Took,
+		"the duration has to be the age of the avatar, not the age of the sweep")
+}
+
+func TestRecoverStaleUploadsReportsHowLongTheAvatarWaited(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	avatars := &stubAvatars{
+		stale: []domain.Avatar{testPendingAvatar(t, testUserID(t, "user-1"))},
+	}
+
+	later := testNow.Add(7 * time.Minute)
+
+	// Act
+	got, err := NewRecoverStaleUploadsHandler(avatars,
+		&stubConfirmer{err: ErrUploadNotFound}, &stubTransactor{},
+		fixedClock{now: later}).
+		Handle(context.Background(), RecoverStaleUploadsCommand{
+			StaleAfter: 5 * time.Minute, Limit: 50,
+		})
+
+	// Assert
+	require.NoError(t, err)
+	require.Len(t, got.Outcomes, 1,
+		"an abandoned upload ends in failed, and that has to reach the metric")
+	assert.True(t, got.Outcomes[0].Status.Equal(domain.AvatarStatusFailed))
+	assert.Equal(t, 7*time.Minute, got.Outcomes[0].Took)
+}
+
+func TestARecoveredAvatarIsNotATerminalOutcome(t *testing.T) {
+	t.Parallel()
+
+	// Arrange
+	avatars := &stubAvatars{
+		stale: []domain.Avatar{testPendingAvatar(t, testUserID(t, "user-1"))},
+	}
+	uploads := &stubConfirmer{
+		confirmation: CompleteUploadConfirmation{FileID: testFileRef(t).String()},
+	}
+
+	// Act
+	got, err := newRecoverHandler(avatars, uploads).
+		Handle(context.Background(), RecoverStaleUploadsCommand{
+			StaleAfter: 10 * time.Minute, Limit: 50,
+		})
+
+	// Assert
+	require.NoError(t, err)
+	assert.Empty(t, got.Outcomes,
+		"processing has only started, so counting it as an upload would be a lie")
 }

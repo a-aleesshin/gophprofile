@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
@@ -26,6 +30,31 @@ type failure struct {
 }
 
 func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
+	ctx, tick := r.tracer.Start(ctx, "outbox tick "+r.transport,
+		trace.WithAttributes(messagingSystem(r.transport)))
+
+	defer tick.End()
+
+	stats, err := r.tick(ctx)
+
+	if tick.IsRecording() {
+		tick.SetAttributes(
+			semconv.MessagingBatchMessageCount(stats.Published+stats.Failed),
+			attribute.Int("messaging.published", stats.Published),
+			attribute.Int("messaging.failed", stats.Failed),
+			attribute.Int("messaging.parked", stats.Parked),
+		)
+
+		if err != nil {
+			tick.RecordError(err)
+			tick.SetStatus(codes.Error, err.Error())
+		}
+	}
+
+	return stats, err
+}
+
+func (r *Relay) tick(ctx context.Context) (RelayStats, error) {
 	now := r.clock.Now()
 
 	leased, err := r.lease(ctx, now)
@@ -37,7 +66,29 @@ func (r *Relay) Tick(ctx context.Context) (RelayStats, error) {
 		return RelayStats{}, nil
 	}
 
-	published, failures, sendErr := r.publish(ctx, leased)
+	publishCtx, span := r.tracer.Start(ctx, "outbox publish "+r.transport,
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			messagingSystem(r.transport),
+			semconv.MessagingOperationTypeSend,
+			semconv.MessagingBatchMessageCount(len(leased)),
+		))
+
+	published, failures, sendErr := r.publish(publishCtx, leased)
+
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.Int("messaging.published", len(published)),
+			attribute.Int("messaging.failed", len(failures)),
+		)
+
+		if sendErr != nil {
+			span.RecordError(sendErr)
+			span.SetStatus(codes.Error, sendErr.Error())
+		}
+	}
+
+	span.End()
 
 	untouched := untouchedOf(leased, published, failures)
 
@@ -175,7 +226,7 @@ func (r *Relay) publish(ctx context.Context, leased []claimed) ([]int64, []failu
 			continue
 		}
 
-		if sendErr := r.sender.Send(ctx, message.Pending); sendErr != nil {
+		if sendErr := r.send(ctx, message.Pending); sendErr != nil {
 			if ctx.Err() != nil {
 				return published, failures, errors.Join(sendErr, ctx.Err())
 			}
@@ -192,6 +243,43 @@ func (r *Relay) publish(ctx context.Context, leased []claimed) ([]int64, []failu
 	}
 
 	return published, failures, nil
+}
+
+func (r *Relay) send(ctx context.Context, message Pending) error {
+	parent, traced := parentOf(ctx, message.Payload)
+	if !traced {
+		return r.sender.Send(ctx, message)
+	}
+
+	options := []trace.SpanStartOption{
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			messagingSystem(message.Transport),
+			semconv.MessagingOperationTypeSend,
+			semconv.MessagingDestinationName(message.Destination),
+			semconv.MessagingMessageBodySize(len(message.Payload)),
+			attribute.Int64("messaging.outbox_id", message.ID),
+		),
+	}
+
+	if batch := trace.LinkFromContext(ctx); batch.SpanContext.IsValid() {
+		options = append(options, trace.WithLinks(batch))
+	}
+
+	sendCtx, span := r.tracer.Start(parent, "send "+message.Destination, options...)
+
+	defer span.End()
+
+	message.Payload = withTrace(sendCtx, message.Payload)
+
+	err := r.sender.Send(sendCtx, message)
+
+	if err != nil && span.IsRecording() {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+
+	return err
 }
 
 func untouchedOf(leased []claimed, published []int64, failures []failure) []claimed {
@@ -332,7 +420,7 @@ func (r *Relay) Run(ctx context.Context) error {
 		metrics.ObserveOutboxTick(r.transport, stats.Published, stats.Failed, stats.Parked)
 
 		for _, message := range stats.ParkedRows {
-			r.logger.Warn("parked an outbox row",
+			r.logger.WarnContext(ctx, "parked an outbox row",
 				"transport", r.transport,
 				"outbox_id", message.ID,
 				"destination", message.Destination,
@@ -369,26 +457,31 @@ func (r *Relay) Run(ctx context.Context) error {
 // anything never reaches the end of a tick, and that is exactly the state the
 // gauge has to describe.
 func (r *Relay) ObserveBacklog(ctx context.Context) error {
-	var oldest time.Time
+	var (
+		oldest  *time.Time
+		pending int64
+		parked  int64
+	)
 
 	err := r.db.Querier(ctx).QueryRow(ctx, `
-		SELECT created_at
+		SELECT min(created_at) FILTER (WHERE published_at IS NULL AND failed_at IS NULL),
+		       count(*) FILTER (WHERE published_at IS NULL AND failed_at IS NULL),
+		       count(*) FILTER (WHERE failed_at IS NOT NULL)
 		  FROM outbox
-		 WHERE transport = $1 AND published_at IS NULL AND failed_at IS NULL
-		 ORDER BY id
-		 LIMIT 1`, r.transport).Scan(&oldest)
+		 WHERE transport = $1`, r.transport).Scan(&oldest, &pending, &parked)
+	if err != nil {
+		return fmt.Errorf("select the %s backlog: %w", r.transport, err)
+	}
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	metrics.SetOutboxDepth(r.transport, pending, parked)
+
+	if oldest == nil {
 		metrics.SetOutboxBacklogAge(r.transport, 0)
 
 		return nil
 	}
 
-	if err != nil {
-		return fmt.Errorf("select oldest unpublished %s row: %w", r.transport, err)
-	}
-
-	age := r.clock.Now().Sub(oldest)
+	age := r.clock.Now().Sub(*oldest)
 	if age < 0 {
 		age = 0
 	}

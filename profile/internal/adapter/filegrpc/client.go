@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -59,6 +60,7 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	conn, err := grpc.NewClient(cfg.Addr,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultServiceConfig(retryPolicy),
 		grpc.WithChainUnaryInterceptor(authorize(cfg.Token), deadline(cfg.Timeout)),

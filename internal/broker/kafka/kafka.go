@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 )
 
@@ -113,6 +115,8 @@ func (p *Producer) Close() {
 
 type Consumer struct {
 	client  *kgo.Client
+	group   string
+	topic   string
 	backoff time.Duration
 	rewound bool
 }
@@ -140,7 +144,41 @@ func NewConsumer(cfg Config) (*Consumer, error) {
 		return nil, fmt.Errorf("open kafka consumer: %w", err)
 	}
 
-	return &Consumer{client: client, backoff: cfg.RetryBackoff}, nil
+	return &Consumer{
+		client:  client,
+		group:   cfg.Group,
+		topic:   cfg.Topic,
+		backoff: cfg.RetryBackoff,
+	}, nil
+}
+
+func (c *Consumer) ObserveLag(ctx context.Context) error {
+	lags, err := kadm.NewClient(c.client).Lag(ctx, c.group)
+	if err != nil {
+		return fmt.Errorf("describe the lag of %s: %w", c.group, err)
+	}
+
+	described, found := lags[c.group]
+	if !found {
+		metrics.SetConsumerLag(c.group, nil)
+
+		return nil
+	}
+
+	if err := described.Error(); err != nil {
+		return fmt.Errorf("lag of %s: %w", c.group, err)
+	}
+
+	byTopic := described.Lag.TotalByTopic()
+	observed := make([]metrics.ConsumerLag, 0, len(byTopic))
+
+	for topic, lag := range byTopic {
+		observed = append(observed, metrics.ConsumerLag{Topic: topic, Lag: lag.Lag})
+	}
+
+	metrics.SetConsumerLag(c.group, observed)
+
+	return nil
 }
 
 func (c *Consumer) Fetch(ctx context.Context) ([]inbox.Delivery, error) {

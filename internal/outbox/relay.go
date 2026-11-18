@@ -7,8 +7,13 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const tracerName = "github.com/a-aleesshin/gophprofile/internal/outbox"
 
 var (
 	ErrInvalidRelayConfig = errors.New("invalid relay config")
@@ -62,6 +67,7 @@ type Relay struct {
 	sender    Sender
 	clock     Clock
 	logger    *slog.Logger
+	tracer    trace.Tracer
 	cfg       RelayConfig
 }
 
@@ -101,12 +107,15 @@ func NewRelay(
 		return nil, fmt.Errorf("%w: max age must be positive", ErrInvalidRelayConfig)
 	}
 
+	metrics.InitOutbox(transport)
+
 	return &Relay{
 		db:        db,
 		transport: transport,
 		sender:    sender,
 		clock:     clock,
 		logger:    logger,
+		tracer:    otel.Tracer(tracerName),
 		cfg:       cfg,
 	}, nil
 }

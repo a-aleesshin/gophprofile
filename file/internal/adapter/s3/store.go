@@ -10,6 +10,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
@@ -60,10 +61,17 @@ func New(cfg Config, guard TransactionGuard) (*Store, error) {
 		return nil, fmt.Errorf("%w: public base %q: %w", ErrInvalidConfig, cfg.PublicBase, err)
 	}
 
+	transport, err := minio.DefaultTransport(cfg.UseSSL)
+	if err != nil {
+		return nil, fmt.Errorf("build the object storage transport: %w", err)
+	}
+
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: cfg.UseSSL,
 		Region: cfg.Region,
+		Transport: otelhttp.NewTransport(transport,
+			otelhttp.WithSpanNameFormatter(objectStorageCall)),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("new minio client: %w", err)
@@ -75,6 +83,10 @@ func New(cfg Config, guard TransactionGuard) (*Store, error) {
 		publicBase: cfg.PublicBase,
 		guard:      guard,
 	}, nil
+}
+
+func objectStorageCall(_ string, r *http.Request) string {
+	return "S3 " + r.Method
 }
 
 func (s *Store) PresignUpload(

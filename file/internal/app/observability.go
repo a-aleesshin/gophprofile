@@ -5,7 +5,34 @@ import (
 	"net/http/pprof"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
+	"github.com/a-aleesshin/gophprofile/internal/metrics"
 )
+
+func reportStorage(result usecase.ObserveStorageResult) {
+	usage := make([]metrics.StorageUsage, 0, len(result.Usage))
+
+	for _, entry := range result.Usage {
+		usage = append(usage, metrics.StorageUsage{
+			Kind:    entry.Kind,
+			Bytes:   entry.Bytes,
+			Objects: entry.Objects,
+		})
+	}
+
+	counts := make([]metrics.FileCount, 0, len(result.Counts))
+
+	for _, entry := range result.Counts {
+		counts = append(counts, metrics.FileCount{
+			Status: entry.Status,
+			Count:  entry.Count,
+		})
+	}
+
+	metrics.SetStorageUsage(usage)
+	metrics.SetFileCounts(counts)
+}
 
 func metricsHandler() http.Handler {
 	mux := http.NewServeMux()

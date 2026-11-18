@@ -311,3 +311,119 @@ func TestFiles_StaleByStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, limited, 1, "the limit caps what one sweep takes on")
 }
+
+func readyFileWithVariants(t *testing.T, originalBytes, variantBytes int64) domain.File {
+	t.Helper()
+
+	ctx := t.Context()
+	files, variants := NewFiles(sharedDB), NewVariants(sharedDB)
+
+	file := testFile(t)
+	require.NoError(t, files.Create(ctx, &file))
+
+	require.NoError(t, file.StartProcessing(time.Now()))
+	require.NoError(t, files.Save(ctx, &file))
+	readyDimensions, err := domain.NewDimensions(640, 480)
+	require.NoError(t, err)
+
+	require.NoError(t, file.MarkReady(testChecksum(t), readyDimensions, time.Now()))
+	require.NoError(t, files.Save(ctx, &file))
+
+	jpg, err := domain.NewExtension("jpg")
+	require.NoError(t, err)
+
+	originalSize, err := domain.NewSize(originalBytes)
+	require.NoError(t, err)
+
+	original, err := domain.NewVariant(domain.NewVariantParams{
+		FileID:   file.ID(),
+		Name:     domain.VariantNameOriginal,
+		Ext:      jpg,
+		MimeType: file.MimeType(),
+		Size:     originalSize,
+		Checksum: testChecksum(t),
+		Now:      time.Now(),
+	})
+	require.NoError(t, err)
+
+	variantSize, err := domain.NewSize(variantBytes)
+	require.NoError(t, err)
+
+	dimensions, err := domain.NewDimensions(100, 100)
+	require.NoError(t, err)
+
+	name, err := domain.NewVariantName("100x100")
+	require.NoError(t, err)
+
+	small, err := domain.NewVariant(domain.NewVariantParams{
+		FileID:     file.ID(),
+		Name:       name,
+		Ext:        jpg,
+		MimeType:   file.MimeType(),
+		Dimensions: dimensions,
+		Size:       variantSize,
+		Checksum:   testChecksum(t),
+		Now:        time.Now(),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, variants.CreateAll(ctx, []domain.Variant{original, small}))
+
+	return file
+}
+
+func TestStorageUsageCountsTheOriginalOnce(t *testing.T) {
+	// Arrange
+	readyFileWithVariants(t, 90_000, 7_000)
+
+	// Act
+	usage, err := NewFiles(sharedDB).StorageUsage(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	byKind := make(map[string]usecase.StorageUsage, len(usage))
+	for _, entry := range usage {
+		byKind[entry.Kind] = entry
+	}
+
+	original, counted := byKind["original"]
+	require.True(t, counted)
+
+	assert.GreaterOrEqual(t, original.Bytes, int64(90_000))
+	assert.GreaterOrEqual(t, byKind["variant"].Bytes, int64(7_000))
+
+	assert.NotContains(t, byKind["variant"].Kind+byKind["original"].Kind, "unknown")
+
+	total := original.Bytes + byKind["variant"].Bytes
+
+	var sumOfBoth int64
+	require.NoError(t, sharedDB.Pool().QueryRow(t.Context(), `
+		SELECT coalesce(sum(v.size_bytes), 0)
+		  FROM file_variants v JOIN files f ON f.id = v.file_id
+		 WHERE f.status = 'ready'`).Scan(&sumOfBoth))
+
+	assert.Equal(t, sumOfBoth, total,
+		"files.size_bytes repeats the original variant, so adding both would bill it twice")
+}
+
+func TestCountByStatusReportsEveryStatusItFinds(t *testing.T) {
+	// Arrange
+	readyFileWithVariants(t, 1_000, 500)
+
+	pending := testFile(t)
+	require.NoError(t, NewFiles(sharedDB).Create(t.Context(), &pending))
+
+	// Act
+	counts, err := NewFiles(sharedDB).CountByStatus(t.Context())
+	require.NoError(t, err)
+
+	// Assert
+	byStatus := make(map[string]int64, len(counts))
+	for _, entry := range counts {
+		byStatus[entry.Status] = entry.Count
+	}
+
+	assert.Positive(t, byStatus["ready"])
+	assert.Positive(t, byStatus[pending.Status().String()],
+		"a file that never became ready still has to show up somewhere")
+}

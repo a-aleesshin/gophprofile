@@ -37,9 +37,9 @@ func New(cfg Config, out io.Writer) (*slog.Logger, error) {
 
 	switch strings.ToLower(strings.TrimSpace(cfg.Format)) {
 	case FormatJSON:
-		return slog.New(slog.NewJSONHandler(out, options)), nil
+		return slog.New(Correlate(slog.NewJSONHandler(out, options))), nil
 	case FormatText:
-		return slog.New(slog.NewTextHandler(out, options)), nil
+		return slog.New(Correlate(slog.NewTextHandler(out, options))), nil
 	default:
 		return nil, fmt.Errorf("%w: unknown format %q", ErrInvalidConfig, cfg.Format)
 	}

@@ -21,6 +21,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/a-aleesshin/gophprofile/file/internal/domain"
 	"github.com/a-aleesshin/gophprofile/file/internal/usecase"
@@ -376,4 +381,62 @@ func TestNew_RejectsIncompleteConfig(t *testing.T) {
 
 	_, err := New(full, pgtx.New(nil))
 	require.NoError(t, err)
+}
+
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+
+		_ = provider.Shutdown(context.Background())
+	})
+
+	return recorder
+}
+
+func TestStorePutIsVisibleInTheTrace(t *testing.T) {
+	// Arrange
+	recorder := recordSpans(t)
+	store, _ := newTestStore(t)
+
+	ctx, caller := otel.Tracer("test").Start(t.Context(), "caller")
+
+	// Act
+	require.NoError(t, store.Put(ctx,
+		testPutParams(t, "variants/traced/300x300.webp", "image/webp", []byte("body"))))
+
+	caller.End()
+
+	// Assert
+	var client sdktrace.ReadOnlySpan
+
+	for _, span := range recorder.Ended() {
+		if span.SpanKind() == trace.SpanKindClient {
+			client = span
+
+			break
+		}
+	}
+
+	require.NotNil(t, client,
+		"an upload spends most of its time in object storage, so it cannot be a blank in the trace")
+
+	assert.Equal(t, caller.SpanContext().TraceID(), client.SpanContext().TraceID())
+
+	attributes := make(map[attribute.Key]attribute.Value, len(client.Attributes()))
+	for _, kv := range client.Attributes() {
+		attributes[kv.Key] = kv.Value
+	}
+
+	assert.Equal(t, "S3 PUT", client.Name(),
+		"a bare \"HTTP PUT\" in a trace does not say which dependency the time went to")
+	assert.Equal(t, "PUT", attributes["http.request.method"].AsString())
+	assert.Equal(t, int64(http.StatusOK), attributes["http.response.status_code"].AsInt64())
 }

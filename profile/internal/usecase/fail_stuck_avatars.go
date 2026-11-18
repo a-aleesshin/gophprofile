@@ -15,8 +15,9 @@ type FailStuckAvatarsCommand struct {
 }
 
 type FailStuckAvatarsResult struct {
-	Failed  int
-	Skipped int
+	Failed   int
+	Skipped  int
+	Outcomes []AvatarOutcome
 }
 
 type FailStuckAvatarsHandler struct {
@@ -72,6 +73,7 @@ func (h *FailStuckAvatarsHandler) Handle(
 			return FailStuckAvatarsResult{}, saveErr
 		default:
 			result.Failed++
+			result.Outcomes = append(result.Outcomes, outcomeOf(&avatar, now))
 		}
 	}
 

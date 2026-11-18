@@ -48,7 +48,9 @@ func (h *ApplyFileRejectedHandler) Handle(
 		return ApplyFactResult{}, err
 	}
 
-	if err := avatar.MarkFailed(fact.Reason, h.clock.Now()); err != nil {
+	now := h.clock.Now()
+
+	if err := avatar.MarkFailed(fact.Reason, now); err != nil {
 		if errors.Is(err, domain.ErrForbiddenAvatarTransition) {
 			return ApplyFactResult{Status: avatar.Status(), Skipped: true}, nil
 		}
@@ -62,5 +64,8 @@ func (h *ApplyFileRejectedHandler) Handle(
 		return ApplyFactResult{}, err
 	}
 
-	return ApplyFactResult{Status: avatar.Status()}, nil
+	return ApplyFactResult{
+		Status: avatar.Status(),
+		Took:   now.Sub(avatar.CreatedAt()),
+	}, nil
 }

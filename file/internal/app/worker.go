@@ -20,6 +20,7 @@ import (
 	"github.com/a-aleesshin/gophprofile/internal/health"
 	"github.com/a-aleesshin/gophprofile/internal/httpserver"
 	"github.com/a-aleesshin/gophprofile/internal/inbox"
+	"github.com/a-aleesshin/gophprofile/internal/observability"
 	"github.com/a-aleesshin/gophprofile/internal/outbox"
 	"github.com/a-aleesshin/gophprofile/internal/pgtx"
 	"github.com/a-aleesshin/gophprofile/internal/worker"
@@ -33,6 +34,8 @@ const (
 	jobBacklog     = "observe-outbox-backlog"
 	jobPruneOutbox = "prune-outbox"
 	jobPruneInbox  = "prune-processed-messages"
+	jobStorage     = "observe-storage"
+	jobLag         = "observe-consumer-lag"
 )
 
 type Closer func()
@@ -56,12 +59,25 @@ func BuildWorker(
 		return nil, nil, err
 	}
 
+	flushTraces, err := observability.StartTracing(ctx, cfg.Tracing,
+		observability.Identity{Service: "file", Component: "worker"})
+	if err != nil {
+		return fail(fmt.Errorf("start tracing: %w", err))
+	}
+
+	closers = append(closers,
+		observability.CloseTracing(flushTraces, cfg.Tracing.Timeout, logger))
+
 	pool, err := pgtx.Connect(ctx, cfg.Postgres)
 	if err != nil {
 		return fail(fmt.Errorf("connect to postgres: %w", err))
 	}
 
 	closers = append(closers, pool.Close)
+
+	if err := pgtx.ObservePool("postgres", pool); err != nil {
+		return fail(fmt.Errorf("observe the postgres pool: %w", err))
+	}
 
 	db := pgtx.New(pool)
 
@@ -160,6 +176,11 @@ func BuildWorker(
 		return fail(fmt.Errorf("build fact consumer: %w", err))
 	}
 
+	lagJob, err := worker.Every(jobLag, cfg.Jobs.BacklogInterval, logger, facts.ObserveLag)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobLag, err))
+	}
+
 	runner.Add("fact consumer", factConsumer)
 
 	for _, routingKey := range routingKeys {
@@ -190,7 +211,7 @@ func BuildWorker(
 			}
 
 			for _, failure := range result.Failures {
-				logger.Warn("upload reconcile attempt failed",
+				logger.WarnContext(ctx, "upload reconcile attempt failed",
 					"upload_id", failure.UploadID.String(),
 					"attempts", failure.Attempts,
 					"max_attempts", cfg.Jobs.ReconcileAttempts,
@@ -198,7 +219,7 @@ func BuildWorker(
 			}
 
 			if result.Completed+result.Expired+result.Aborted+result.Failed > 0 {
-				logger.Info("reconciled uploads",
+				logger.InfoContext(ctx, "reconciled uploads",
 					"completed", result.Completed,
 					"expired", result.Expired,
 					"aborted", result.Aborted,
@@ -222,7 +243,7 @@ func BuildWorker(
 			}
 
 			if result.Rejected+result.Requeued+result.Failed > 0 {
-				logger.Info("reaped stale files",
+				logger.InfoContext(ctx, "reaped stale files",
 					"rejected", result.Rejected,
 					"requeued", result.Requeued,
 					"failed", result.Failed)
@@ -264,7 +285,7 @@ func BuildWorker(
 			}
 
 			if removed.Published > 0 || removed.Parked > 0 {
-				logger.Info("pruned outbox rows",
+				logger.InfoContext(ctx, "pruned outbox rows",
 					"published", removed.Published, "parked", removed.Parked)
 			}
 
@@ -272,6 +293,26 @@ func BuildWorker(
 		})
 	if err != nil {
 		return fail(fmt.Errorf("build %s: %w", jobPruneOutbox, err))
+	}
+
+	observeStorage, err := usecase.NewObserveStorageHandler(files)
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobStorage, err))
+	}
+
+	storageJob, err := worker.Every(jobStorage, cfg.Jobs.StorageInterval, logger,
+		func(ctx context.Context) error {
+			result, err := observeStorage.Handle(ctx)
+			if err != nil {
+				return err
+			}
+
+			reportStorage(result)
+
+			return nil
+		})
+	if err != nil {
+		return fail(fmt.Errorf("build %s: %w", jobStorage, err))
 	}
 
 	pruneInboxJob, err := worker.Every(jobPruneInbox, cfg.Jobs.PruneInterval, logger,
@@ -282,7 +323,7 @@ func BuildWorker(
 			}
 
 			if removed.Processed > 0 || removed.Failures > 0 || removed.Dropped > 0 {
-				logger.Info("pruned inbox rows",
+				logger.InfoContext(ctx, "pruned inbox rows",
 					"processed", removed.Processed,
 					"failures", removed.Failures,
 					"dropped", removed.Dropped)
@@ -300,7 +341,9 @@ func BuildWorker(
 		Add(jobReconcile, reconcileJob).
 		Add(jobReap, reapJob).
 		Add(jobPruneOutbox, pruneOutboxJob).
-		Add(jobPruneInbox, pruneInboxJob)
+		Add(jobPruneInbox, pruneInboxJob).
+		Add(jobStorage, storageJob).
+		Add(jobLag, lagJob)
 
 	checks, err := health.New(cfg.Health,
 		health.Check{Name: "postgres", Critical: true, Probe: pool.Ping},

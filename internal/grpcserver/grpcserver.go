@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 )
 
@@ -50,6 +51,7 @@ func New(cfg Config, logger *slog.Logger, register func(*grpc.Server)) (*Server,
 	}
 
 	server := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.MaxRecvMsgSize(cfg.MaxRecvMsgSize),
 		grpc.MaxSendMsgSize(cfg.MaxSendMsgSize),
 		grpc.ChainUnaryInterceptor(
