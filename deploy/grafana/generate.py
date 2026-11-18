@@ -1,6 +1,6 @@
 import json, pathlib, sys
 
-OUT = pathlib.Path("deploy/grafana/dashboards")
+OUT = pathlib.Path("deploy/helm/gophprofile/files/dashboards")
 PROM = {"type": "prometheus", "uid": "prometheus"}
 
 

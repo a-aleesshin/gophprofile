@@ -153,7 +153,7 @@ services:
       GF_INSTALL_PLUGINS: grafana-opensearch-datasource
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./deploy/helm/gophprofile/files/dashboards:/var/lib/grafana/dashboards:ro
       - grafana:/var/lib/grafana
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
@@ -206,7 +206,8 @@ services:
       - --storage.tsdb.retention.time=7d
       - --web.enable-lifecycle
     volumes:
-      - ./deploy/prometheus:/etc/prometheus:ro
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/helm/gophprofile/files/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus:/prometheus
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
