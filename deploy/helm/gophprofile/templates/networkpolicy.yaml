@@ -44,6 +44,8 @@ metadata:
     {{- include "gophprofile.labels" . | nindent 4 }}
 spec:
   podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In
@@ -73,6 +75,8 @@ spec:
   ingress:
     - from:
         - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
