@@ -1,3 +1,9 @@
+# Значения для локального кластера. Файл с реальными значениями
+# (values-local.yaml) в репозиторий не попадает, его создаёт `task env`.
+#
+# Строки подключения и ключи хранилища ниже — учётные данные стенда, те же,
+# что в .env.example. Для любого другого кластера подставьте свои.
+
 image:
   pullPolicy: IfNotPresent
 
@@ -9,10 +15,10 @@ services:
       TRACING_ENABLED: "true"
       TRACING_ENDPOINT: jaeger.monitoring:4317
     secretEnv:
-      POSTGRES_DSN: postgres://file:file@file-db:5432/file?sslmode=disable
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      RABBIT_URL: amqp://guest:guest@rabbitmq:5672/
+      POSTGRES_DSN: postgres://USER:PASSWORD@file-db:5432/file?sslmode=disable
+      S3_ACCESS_KEY: ACCESS_KEY
+      S3_SECRET_KEY: SECRET_KEY
+      RABBIT_URL: amqp://USER:PASSWORD@rabbitmq:5672/
   profile:
     env:
       CONTENT_PUBLIC_BASE: http://localhost:8080
@@ -21,7 +27,7 @@ services:
       TRACING_ENABLED: "true"
       TRACING_ENDPOINT: jaeger.monitoring:4317
     secretEnv:
-      POSTGRES_DSN: postgres://profile:profile@profile-db:5432/profile?sslmode=disable
+      POSTGRES_DSN: postgres://USER:PASSWORD@profile-db:5432/profile?sslmode=disable
 
 workloads:
   file-server:

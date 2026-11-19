@@ -9,20 +9,41 @@ vars:
 
 tasks:
   env:
-    desc: Create .env from the example with freshly generated secrets
+    desc: Create .env and the local chart values from the examples
     silent: true
+    vars:
+      VALUES: deploy/helm/gophprofile/values-local.yaml
     cmds:
       - |
         if [ -f .env ]; then
           echo ".env already exists, leaving it alone"
+        else
+          sed -e "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" \
+              -e "s|^GRPC_TOKEN=.*|GRPC_TOKEN=$(openssl rand -hex 32)|" \
+              -e "s|^IDENTITY_SECRET=.*|IDENTITY_SECRET=$(openssl rand -hex 32)|" \
+              -e "s|^IDENTITY_LOGIN_SECRET=.*|IDENTITY_LOGIN_SECRET=$(openssl rand -hex 32)|" \
+              .env.example > .env
+
+          echo ".env created, secrets generated"
+        fi
+
+        if [ -f {{.VALUES}} ]; then
+          echo "{{.VALUES}} already exists, leaving it alone"
           exit 0
         fi
 
-        sed -e "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" \
-            -e "s|^GRPC_TOKEN=.*|GRPC_TOKEN=$(openssl rand -hex 32)|" \
-            .env.example > .env
+        set -a
+        . ./.env
+        set +a
 
-        echo ".env created, LINK_SECRET and GRPC_TOKEN generated"
+        sed -e "s|postgres://USER:PASSWORD@file-db|postgres://file:file@file-db|" \
+            -e "s|postgres://USER:PASSWORD@profile-db|postgres://profile:profile@profile-db|" \
+            -e "s|S3_ACCESS_KEY: ACCESS_KEY|S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}|" \
+            -e "s|S3_SECRET_KEY: SECRET_KEY|S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}|" \
+            -e "s|amqp://USER:PASSWORD@rabbitmq|amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq|" \
+            {{.VALUES}}.example > {{.VALUES}}
+
+        echo "{{.VALUES}} created from the example"
 
   build:
     desc: Build every binary of the file service
