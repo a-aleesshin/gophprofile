@@ -1,0 +1,19 @@
+{{- range $service, $spec := .Values.services }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gophprofile.configName" (dict "root" $ "service" $service) }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $service }}
+data:
+  {{- if eq $service "profile" }}
+  FILE_ADDR: {{ printf "%s:%v" (include "gophprofile.componentName" (dict "root" $ "component" "file-server")) (dig "ports" "grpc" 9090 (index $.Values.workloads "file-server")) | quote }}
+  {{- end }}
+  {{- range $key, $value := $spec.env }}
+  {{- if $value }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}
+{{- end }}

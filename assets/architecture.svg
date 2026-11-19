@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+    <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#94a3b8"/></marker></defs>
+    <rect x="0" y="0" width="1280" height="760" fill="#ffffff"/>
+    <rect x="40" y="250" width="760" height="250" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="6 4"/>
+    <text x="54" y="270" font-size="12" font-weight="600" fill="#64748b" letter-spacing="0.4">Helm-релиз gophprofile</text>
+    <rect x="40" y="560" width="760" height="130" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.4" stroke-dasharray="6 4"/>
+    <text x="54" y="580" font-size="12" font-weight="600" fill="#64748b" letter-spacing="0.4">Зависимости</text>
+    <rect x="896" y="250" width="348" height="300" rx="12" fill="#fff7ed" stroke="#fdba74" stroke-width="1.4" stroke-dasharray="6 4"/>
+    <text x="910" y="270" font-size="12" font-weight="600" fill="#64748b" letter-spacing="0.4">namespace monitoring</text>
+    <path d="M420 84 L420 140" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M300 194 L300 230 L145 230 L145 290" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="191.9" y="221" width="61.2" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="222.5" y="230" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">/static/</text>
+    <path d="M360 194 L360 290" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="329.4" y="233.0" width="61.2" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="360" y="242.0" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">/api/v1/</text>
+    <path d="M480 194 L480 230 L625 230 L625 290" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="521.9" y="221" width="61.2" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="552.5" y="230" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">/upload/</text>
+    <path d="M250 167 L25 167 L25 730 L595 730 L595 654" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="243.8" y="721" width="112.4" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="300" y="730" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">/s3/gophprofile/</text>
+    <path d="M420 320 L540 320" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="462.2" y="311" width="35.6" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="480.0" y="320" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">gRPC</text>
+    <path d="M290 350 L290 520 L135 520 L135 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M290 470 L290 540 L110 540 L110 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M380 470 L380 560 L290 560 L290 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)" marker-start="url(#tail)"/>
+    <path d="M690 350 L690 520 L735 520 L735 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M580 350 L580 520 L595 520 L595 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M690 470 L690 540 L760 540 L760 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M600 470 L600 545 L570 545 L570 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M560 470 L560 555 L445 555 L445 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)" marker-start="url(#tail)"/>
+    <path d="M540 440 L470 440 L470 575 L320 575 L320 600" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)" marker-start="url(#tail)"/>
+    <path d="M800 400 L896 400" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)" stroke-dasharray="6 4"/>
+    <rect x="769.4" y="369" width="157.20000000000002" height="18" rx="4" fill="#ffffff" stroke="#e2e8f0"/>
+    <text x="848" y="378" text-anchor="middle" dominant-baseline="central" font-size="11" fill="#475569">логи · метрики · трейсы</text>
+    <path d="M976 334 L976 370" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M1076 370 L1076 345 L1164 345 L1164 334" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M966 414 L966 460" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M1076 414 L1076 460" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <path d="M1186 414 L1186 460" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#head)"/>
+    <rect x="330" y="30" width="180" height="54" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.6"/>
+    <text x="420.0" y="57.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#4f46e5">Браузер</text>
+    <rect x="250" y="140" width="340" height="54" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="1.6"/>
+    <text x="420.0" y="167.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#b45309">Ingress</text>
+    <rect x="70" y="290" width="150" height="60" rx="8" fill="#f1f5f9" stroke="#475569" stroke-width="1.6"/>
+    <text x="145.0" y="311.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#475569">web</text>
+    <text x="145.0" y="329.0" text-anchor="middle" dominant-baseline="central" font-size="11.5" font-weight="400" fill="#64748b">консоль</text>
+    <rect x="250" y="290" width="170" height="60" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.6"/>
+    <text x="335.0" y="311.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#1d4ed8">profile-server</text>
+    <text x="335.0" y="329.0" text-anchor="middle" dominant-baseline="central" font-size="11.5" font-weight="400" fill="#64748b">HPA 1…4</text>
+    <rect x="540" y="290" width="170" height="60" rx="8" fill="#dbeafe" stroke="#1d4ed8" stroke-width="1.6"/>
+    <text x="625.0" y="311.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#1d4ed8">file-server</text>
+    <text x="625.0" y="329.0" text-anchor="middle" dominant-baseline="central" font-size="11.5" font-weight="400" fill="#64748b">HPA 1…4</text>
+    <rect x="250" y="410" width="170" height="60" rx="8" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.6"/>
+    <text x="335.0" y="440.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#0369a1">profile-worker</text>
+    <rect x="540" y="410" width="170" height="60" rx="8" fill="#e0f2fe" stroke="#0369a1" stroke-width="1.6"/>
+    <text x="625.0" y="440.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#0369a1">file-worker</text>
+    <rect x="70" y="600" width="130" height="54" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.6"/>
+    <text x="135.0" y="627.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#15803d">profile-db</text>
+    <rect x="230" y="600" width="120" height="54" rx="8" fill="#fae8ff" stroke="#a21caf" stroke-width="1.6"/>
+    <text x="290.0" y="627.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#a21caf">Kafka</text>
+    <rect x="380" y="600" width="130" height="54" rx="8" fill="#fae8ff" stroke="#a21caf" stroke-width="1.6"/>
+    <text x="445.0" y="627.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#a21caf">RabbitMQ</text>
+    <rect x="540" y="600" width="110" height="54" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.6"/>
+    <text x="595.0" y="627.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#15803d">MinIO</text>
+    <rect x="680" y="600" width="110" height="54" rx="8" fill="#dcfce7" stroke="#15803d" stroke-width="1.6"/>
+    <text x="735.0" y="627.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#15803d">file-db</text>
+    <rect x="916" y="290" width="120" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="976.0" y="312.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Fluent Bit</text>
+    <rect x="1104" y="290" width="120" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="1164.0" y="312.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Alertmanager</text>
+    <rect x="916" y="370" width="100" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="966.0" y="392.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Loki</text>
+    <rect x="1026" y="370" width="100" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="1076.0" y="392.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Prometheus</text>
+    <rect x="1136" y="370" width="100" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="1186.0" y="392.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Jaeger</text>
+    <rect x="916" y="460" width="320" height="44" rx="8" fill="#ffe4e6" stroke="#be123c" stroke-width="1.6"/>
+    <text x="1076.0" y="482.0" text-anchor="middle" dominant-baseline="central" font-size="14" font-weight="600" fill="#be123c">Grafana</text>
+</svg>

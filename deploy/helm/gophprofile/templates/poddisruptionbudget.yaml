@@ -1,0 +1,17 @@
+{{- range $component, $workload := .Values.workloads }}
+{{- if (dig "disruptionBudget" "enabled" false $workload) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  maxUnavailable: {{ dig "disruptionBudget" "maxUnavailable" 1 $workload }}
+  selector:
+    matchLabels:
+      {{- include "gophprofile.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+{{- end }}
+{{- end }}

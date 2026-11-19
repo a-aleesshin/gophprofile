@@ -1,0 +1,689 @@
+openapi: 3.0.3
+
+info:
+  title: GophProfile API
+  version: "1.0.0"
+  description: |
+    Аватарки пользователей: загрузка, галерея, привязка email и постоянные
+    ссылки на изображение.
+
+    Байты не проходят через сервис. Загрузка состоит из трёх шагов:
+
+    1. `POST /api/v1/avatars/uploads` возвращает тикет: адрес хранилища и поля
+       формы.
+    2. Клиент отправляет `multipart/form-data` прямо по этому адресу. Это
+       контракт S3, а не наш: поля из тикета передаются как есть, файл идёт
+       полем `file` последним.
+    3. `POST /api/v1/avatars/{avatar_id}/complete` сообщает, что байты на месте.
+
+    Ответ на третьем шаге приходит сразу, со статусом `processing`. Нарезка
+    размеров идёт в фоне; готовность видно по `GET /api/v1/avatars/{avatar_id}/metadata`.
+
+servers:
+  - url: http://localhost:8000
+    description: Локальный запуск через docker compose
+
+tags:
+  - name: avatars
+    description: Загрузка, чтение и удаление аватарок
+  - name: users
+    description: Профиль пользователя и привязка email
+  - name: sessions
+    description: Выдача токена демонстрационного входа
+
+paths:
+  /api/v1/sessions:
+    post:
+      operationId: openSession
+      tags: [sessions]
+      summary: Открыть сессию
+      description: |
+        Демонстрационный вход. Маршрут существует, только когда сервис запущен
+        с `IDENTITY_DEMO_LOGIN=true`; иначе он не зарегистрирован и отвечает 404.
+        Настоящей аутентификации здесь нет: общий секрет стенда обменивается на
+        токен для указанного пользователя.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenSessionRequest"
+      responses:
+        "201":
+          description: Токен выдан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Секрет стенда не подошёл
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: bad_secret
+
+  /api/v1/avatars/uploads:
+    post:
+      operationId: startUpload
+      tags: [avatars]
+      summary: Запросить тикет на загрузку
+      description: |
+        Создаёт аватарку в статусе `pending` и возвращает подписанную форму для
+        отправки байтов в хранилище. Тикет живёт ограниченное время, срок — в
+        поле `upload.expires_at`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartUploadRequest"
+      responses:
+        "201":
+          description: Тикет выдан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartUpload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: У пользователя уже слишком много аватарок
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: too_many_avatars
+        "413":
+          description: Файл больше разрешённого политикой размера
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: file_too_large
+        "503":
+          $ref: "#/components/responses/FileUnavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /api/v1/avatars/{avatar_id}/complete:
+    post:
+      operationId: completeUpload
+      tags: [avatars]
+      summary: Сообщить, что байты загружены
+      description: |
+        Переводит аватарку в `processing` и ставит обработку в очередь. Ответ не
+        ждёт нарезки размеров.
+      parameters:
+        - $ref: "#/components/parameters/AvatarID"
+      responses:
+        "202":
+          description: Принято в обработку
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompleteUpload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/AvatarNotFound"
+        "409":
+          description: Тикет истёк или байтов в хранилище нет
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: upload_expired
+        "503":
+          $ref: "#/components/responses/FileUnavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /api/v1/avatars/{avatar_id}:
+    get:
+      operationId: resolveAvatar
+      tags: [avatars]
+      summary: Перейти к изображению аватарки
+      description: |
+        Отвечает редиректом на постоянный адрес нужного размера. Сам файл
+        раздаёт сервис хранения, его контракт описан отдельно.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/AvatarID"
+        - $ref: "#/components/parameters/Size"
+      responses:
+        "302":
+          $ref: "#/components/responses/Redirect"
+        "404":
+          $ref: "#/components/responses/AvatarNotFound"
+        "409":
+          description: Аватарка ещё обрабатывается или не дошла до готовности
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: avatar_not_ready
+    delete:
+      operationId: deleteAvatar
+      tags: [avatars]
+      summary: Удалить аватарку
+      description: |
+        Помечает аватарку удалённой и отправляет событие на удаление объектов из
+        хранилища. Повторный вызов для уже удалённой аватарки тоже отвечает 204.
+      parameters:
+        - $ref: "#/components/parameters/AvatarID"
+      responses:
+        "204":
+          description: Удалена
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/AvatarNotFound"
+
+  /api/v1/avatars/{avatar_id}/metadata:
+    get:
+      operationId: getAvatar
+      tags: [avatars]
+      summary: Прочитать аватарку
+      description: |
+        Владельцу отдаются дополнительно имя исходного файла и причина отказа.
+        Запрос без токена получает ту же аватарку без этих полей.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/AvatarID"
+      responses:
+        "200":
+          description: Аватарка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Avatar"
+        "404":
+          $ref: "#/components/responses/AvatarNotFound"
+
+  /api/v1/users/{user_id}/avatars:
+    get:
+      operationId: listAvatars
+      tags: [users]
+      summary: Галерея пользователя
+      description: |
+        Страница задаётся курсором: `next_cursor` из ответа передаётся в
+        следующий запрос. Пустой `next_cursor` означает, что страниц больше нет.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+        - name: limit
+          in: query
+          description: Сколько аватарок вернуть. Ноль или отсутствие — значение по умолчанию.
+          schema:
+            type: integer
+            minimum: 0
+        - name: cursor
+          in: query
+          description: Курсор из поля `next_cursor` предыдущего ответа.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Страница галереи
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarList"
+        "400":
+          description: Курсор или limit не разобрались
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: invalid_cursor
+        "404":
+          $ref: "#/components/responses/ProfileNotFound"
+
+  /api/v1/users/{user_id}/avatar:
+    get:
+      operationId: resolveCurrentAvatar
+      tags: [users]
+      summary: Перейти к текущей аватарке пользователя
+      description: |
+        Адрес постоянный, а содержимое по нему меняется вместе с текущей
+        аватаркой. Если аватарки нет, отвечает редиректом на заглушку, а не 404:
+        страница, вставившая такую ссылку, не должна показывать битую картинку.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+        - $ref: "#/components/parameters/Size"
+      responses:
+        "302":
+          $ref: "#/components/responses/Redirect"
+        "404":
+          $ref: "#/components/responses/ProfileNotFound"
+
+  /api/v1/users/{user_id}:
+    put:
+      operationId: bindEmail
+      tags: [users]
+      summary: Привязать email к профилю
+      description: |
+        Сам email не сохраняется и в ответ не возвращается — только его sha256.
+        По этому хешу аватарку потом можно найти, не передавая почту в адресах и
+        логах.
+      parameters:
+        - $ref: "#/components/parameters/UserID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindEmailRequest"
+      responses:
+        "200":
+          description: Email привязан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BindEmail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Нельзя привязывать email к чужому профилю
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: forbidden
+        "404":
+          $ref: "#/components/responses/ProfileNotFound"
+        "409":
+          description: Этот email уже привязан к другому профилю
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                error: email_taken
+
+  /api/v1/emails/{email_hash}/avatar:
+    get:
+      operationId: resolveByEmail
+      tags: [users]
+      summary: Перейти к аватарке по хешу email
+      description: |
+        Сценарий для сторонней площадки: она знает почту, считает от неё sha256 и
+        получает картинку, не передавая саму почту.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: email_hash
+          in: path
+          required: true
+          description: sha256 от email в нижнем регистре, шестнадцатеричной записью.
+          schema:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+        - $ref: "#/components/parameters/Size"
+      responses:
+        "302":
+          $ref: "#/components/responses/Redirect"
+        "404":
+          $ref: "#/components/responses/ProfileNotFound"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Токен из `POST /api/v1/sessions`.
+
+  parameters:
+    AvatarID:
+      name: avatar_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserID:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Size:
+      name: size
+      in: query
+      description: |
+        Имя размера из политики, например `100x100`, `300x300` или `web`.
+        Без параметра выдаётся размер по умолчанию.
+      schema:
+        type: string
+
+  responses:
+    Redirect:
+      description: Редирект на постоянный адрес изображения
+      headers:
+        Location:
+          description: Адрес изображения
+          schema:
+            type: string
+            format: uri
+        Cache-Control:
+          description: |
+            У заглушки срок кеширования короче, чем у настоящей аватарки.
+          schema:
+            type: string
+    BadRequest:
+      description: Тело или параметры запроса не разобрались
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: invalid_request
+    Unauthorized:
+      description: Токена нет или он не прошёл проверку
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: no_token
+    Forbidden:
+      description: Действие над чужим объектом
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: forbidden
+    AvatarNotFound:
+      description: Аватарка не найдена
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: avatar_not_found
+    ProfileNotFound:
+      description: Профиль не найден
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: profile_not_found
+    FileUnavailable:
+      description: Сервис хранения недоступен
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: file_unavailable
+    Timeout:
+      description: Сервис хранения не ответил в срок
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: timeout
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Машиночитаемая причина.
+          enum:
+            - invalid_body
+            - invalid_request
+            - invalid_user
+            - invalid_cursor
+            - invalid_mime_type
+            - no_token
+            - bad_token
+            - no_user
+            - bad_secret
+            - forbidden
+            - avatar_not_found
+            - profile_not_found
+            - variant_not_found
+            - upload_not_found
+            - avatar_not_ready
+            - too_many_avatars
+            - upload_expired
+            - email_taken
+            - conflict
+            - file_too_large
+            - file_unavailable
+            - timeout
+            - internal
+        details:
+          type: string
+          description: Подробности. Приходят только там, где они не раскрывают чужих данных.
+        status:
+          type: string
+
+    OpenSessionRequest:
+      type: object
+      required: [user_id, secret]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        secret:
+          type: string
+          description: Общий секрет стенда, `IDENTITY_LOGIN_SECRET`.
+
+    Session:
+      type: object
+      required: [user_id, token, expires_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    StartUploadRequest:
+      type: object
+      required: [file_name, mime_type, size_bytes]
+      properties:
+        file_name:
+          type: string
+        mime_type:
+          type: string
+          description: Допустимые типы задаются политикой пространства имён.
+          example: image/png
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+
+    UploadTicket:
+      type: object
+      required: [url, fields, expires_at]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Адрес хранилища, куда уходит форма.
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+          description: |
+            Поля формы, которые надо передать без изменений. Файл добавляется
+            полем `file` последним.
+        expires_at:
+          type: string
+          format: date-time
+
+    StartUpload:
+      type: object
+      required: [avatar_id, status, upload]
+      properties:
+        avatar_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/AvatarStatus"
+        upload:
+          $ref: "#/components/schemas/UploadTicket"
+
+    CompleteUpload:
+      type: object
+      required: [avatar_id, status]
+      properties:
+        avatar_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/AvatarStatus"
+
+    AvatarStatus:
+      type: string
+      enum: [pending, processing, ready, failed, deleted]
+
+    Dimensions:
+      type: object
+      required: [width, height]
+      properties:
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+
+    File:
+      type: object
+      required: [mime_type, size_bytes, dimensions]
+      properties:
+        file_name:
+          type: string
+          description: Только владельцу.
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+        dimensions:
+          $ref: "#/components/schemas/Dimensions"
+
+    Variant:
+      type: object
+      required: [name, url, width, height, mime_type]
+      properties:
+        name:
+          type: string
+          example: 300x300
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+        mime_type:
+          type: string
+
+    Avatar:
+      type: object
+      required: [id, user_id, status, variants, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/AvatarStatus"
+        file:
+          $ref: "#/components/schemas/File"
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/Variant"
+        failed_reason:
+          type: string
+          description: |
+            Только владельцу и только для статуса `failed`. Внутренние причины
+            схлопываются в `upload_failed`.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AvatarList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Avatar"
+        next_cursor:
+          type: string
+          description: Пусто, если страниц больше нет.
+
+    BindEmailRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    BindEmail:
+      type: object
+      required: [user_id, email_hash]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+
+security:
+  - bearerAuth: []

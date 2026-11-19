@@ -35,5 +35,6 @@ MacOS
 .gocache
 .gotmp
 /.env
+/deploy/helm/gophprofile/values-local.yaml
 /_tmp/
 /docs/

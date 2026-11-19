@@ -1,0 +1,136 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="GophProfile">
+    <mxGraphModel dx="1180" dy="740" grid="1" gridSize="10" page="1" pageWidth="1280" pageHeight="760">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="release" value="Helm-релиз gophprofile" parent="1" vertex="1" style="rounded=1;arcSize=6;fillColor=#f8fafc;strokeColor=#cbd5e1;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=4;fontSize=12;fontColor=#64748B;fontStyle=1">
+          <mxGeometry x="40" y="250" width="760" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="deps" value="Зависимости" parent="1" vertex="1" style="rounded=1;arcSize=6;fillColor=#f8fafc;strokeColor=#cbd5e1;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=4;fontSize=12;fontColor=#64748B;fontStyle=1">
+          <mxGeometry x="40" y="560" width="760" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="monitoring" value="namespace monitoring" parent="1" vertex="1" style="rounded=1;arcSize=6;fillColor=#fff7ed;strokeColor=#fdba74;dashed=1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=4;fontSize=12;fontColor=#64748B;fontStyle=1">
+          <mxGeometry x="896" y="250" width="348" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="browser" value="Браузер" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#eef2ff;strokeColor=#4f46e5;fontColor=#4f46e5;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="330" y="30" width="180" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="ingress" value="Ingress" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#fef3c7;strokeColor=#b45309;fontColor=#b45309;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="250" y="140" width="340" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="web" value="web&amp;#10;консоль" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#f1f5f9;strokeColor=#475569;fontColor=#475569;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="70" y="290" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="profile-server" value="profile-server&amp;#10;HPA 1…4" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#dbeafe;strokeColor=#1d4ed8;fontColor=#1d4ed8;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="250" y="290" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="file-server" value="file-server&amp;#10;HPA 1…4" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#dbeafe;strokeColor=#1d4ed8;fontColor=#1d4ed8;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="540" y="290" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="profile-worker" value="profile-worker" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#0369a1;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="250" y="410" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="file-worker" value="file-worker" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#0369a1;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="540" y="410" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="profile-db" value="profile-db" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#15803d;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="70" y="600" width="130" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="kafka" value="Kafka" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#fae8ff;strokeColor=#a21caf;fontColor=#a21caf;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="230" y="600" width="120" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="rabbitmq" value="RabbitMQ" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#fae8ff;strokeColor=#a21caf;fontColor=#a21caf;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="380" y="600" width="130" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="minio" value="MinIO" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#15803d;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="540" y="600" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="file-db" value="file-db" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#15803d;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="680" y="600" width="110" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="fluent-bit" value="Fluent Bit" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="916" y="290" width="120" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="alertmanager" value="Alertmanager" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="1104" y="290" width="120" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="loki" value="Loki" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="916" y="370" width="100" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="prometheus" value="Prometheus" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="1026" y="370" width="100" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="jaeger" value="Jaeger" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="1136" y="370" width="100" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="grafana" value="Grafana" parent="1" vertex="1" style="rounded=1;arcSize=14;fillColor=#ffe4e6;strokeColor=#be123c;fontColor=#be123c;fontSize=13;fontStyle=1;whiteSpace=wrap;html=1">
+          <mxGeometry x="916" y="460" width="320" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="edge0" value="" parent="1" edge="1" source="browser" target="ingress" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" value="/static/" parent="1" edge="1" source="ingress" target="web" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" value="/api/v1/" parent="1" edge="1" source="ingress" target="profile-server" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" value="/upload/" parent="1" edge="1" source="ingress" target="file-server" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" value="/s3/gophprofile/" parent="1" edge="1" source="ingress" target="minio" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" value="gRPC" parent="1" edge="1" source="profile-server" target="file-server" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" value="" parent="1" edge="1" source="profile-server" target="profile-db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge7" value="" parent="1" edge="1" source="profile-worker" target="profile-db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge8" value="" parent="1" edge="1" source="profile-worker" target="kafka" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=classic;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge9" value="" parent="1" edge="1" source="file-server" target="file-db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" value="" parent="1" edge="1" source="file-server" target="minio" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" value="" parent="1" edge="1" source="file-worker" target="file-db" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge12" value="" parent="1" edge="1" source="file-worker" target="minio" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge13" value="" parent="1" edge="1" source="file-worker" target="rabbitmq" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=classic;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge14" value="" parent="1" edge="1" source="file-worker" target="kafka" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=classic;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge15" value="логи · метрики · трейсы" parent="1" edge="1" source="release" target="monitoring" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge16" value="" parent="1" edge="1" source="fluent-bit" target="loki" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge17" value="" parent="1" edge="1" source="prometheus" target="alertmanager" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge18" value="" parent="1" edge="1" source="loki" target="grafana" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge19" value="" parent="1" edge="1" source="prometheus" target="grafana" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge20" value="" parent="1" edge="1" source="jaeger" target="grafana" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=0;strokeColor=#94A3B8;fontSize=11;fontColor=#475569;startArrow=none;startFill=1;endArrow=classic;endFill=1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

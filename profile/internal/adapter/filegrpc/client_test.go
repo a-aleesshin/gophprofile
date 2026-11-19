@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	filev1 "github.com/a-aleesshin/gophprofile/file/gen/file/v1"
+	"github.com/a-aleesshin/gophprofile/internal/breaker"
 	"github.com/a-aleesshin/gophprofile/profile/internal/usecase"
 )
 
@@ -91,6 +92,14 @@ func testClientWithTimeout(
 ) (*Client, *[]string) {
 	t.Helper()
 
+	return testClientWith(t, service, timeout, breaker.Config{})
+}
+
+func testClientWith(
+	t *testing.T, service *fakeFileService, timeout time.Duration, guard breaker.Config,
+) (*Client, *[]string) {
+	t.Helper()
+
 	tokens := new([]string)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -118,6 +127,7 @@ func testClientWithTimeout(
 		Addr:    listener.Addr().String(),
 		Token:   testToken,
 		Timeout: timeout,
+		Breaker: guard,
 	})
 	require.NoError(t, err)
 
@@ -449,4 +459,31 @@ func TestClientFitsThePortsItWasWrittenFor(t *testing.T) {
 	// them is the only way to assert the fit, and it fails at compile time.
 	assert.NotNil(t, usecase.NewStartUploadHandler(nil, nil, nil, client, nil, nil))
 	assert.NotNil(t, usecase.NewCompleteUploadHandler(nil, client, nil, nil))
+}
+
+func TestBreakerStopsCallingAFileServiceThatKeepsFailing(t *testing.T) {
+	service := &fakeFileService{}
+	service.failures.Store(1000)
+
+	client, _ := testClientWith(t, service, 2*time.Second, breaker.Config{
+		Enabled:  true,
+		Failures: 2,
+		Cooldown: time.Minute,
+		Probes:   1,
+	})
+
+	for range 2 {
+		_, err := client.CreateUpload(t.Context(), usecase.CreateUploadParams{})
+		require.ErrorIs(t, err, usecase.ErrFileServiceUnavailable)
+	}
+
+	reached := service.calls.Load()
+	require.Positive(t, reached, "the first calls must reach the service")
+
+	_, err := client.CreateUpload(t.Context(), usecase.CreateUploadParams{})
+
+	require.ErrorIs(t, err, usecase.ErrFileServiceUnavailable,
+		"an open breaker must look like an unavailable dependency, not an unknown error")
+	assert.Equal(t, reached, service.calls.Load(),
+		"an open breaker must answer without touching the network")
 }

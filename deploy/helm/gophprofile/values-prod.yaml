@@ -1,0 +1,101 @@
+image:
+  pullPolicy: IfNotPresent
+
+services:
+  file:
+    env:
+      LOG_LEVEL: info
+      S3_ENDPOINT: s3.example.com:443
+      S3_PUBLIC_BASE: https://avatars.example.com/s3
+      LINK_PUBLIC_BASE: https://avatars.example.com
+      TRACING_ENABLED: "true"
+      TRACING_ENDPOINT: jaeger-collector.observability:4317
+      TRACING_SAMPLE_RATIO: "0.1"
+    existingSecret: gophprofile-file
+  profile:
+    env:
+      LOG_LEVEL: info
+      CONTENT_PUBLIC_BASE: https://avatars.example.com
+      CONTENT_PLACEHOLDER: https://avatars.example.com/static/placeholder.svg
+      IDENTITY_DEMO_LOGIN: "false"
+      TRACING_ENABLED: "true"
+      TRACING_ENDPOINT: jaeger-collector.observability:4317
+      TRACING_SAMPLE_RATIO: "0.1"
+    existingSecret: gophprofile-profile
+
+workloads:
+  file-server:
+    replicas: 3
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+    disruptionBudget:
+      enabled: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+  file-worker:
+    replicas: 3
+    disruptionBudget:
+      enabled: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+      limits:
+        memory: 1Gi
+  profile-server:
+    replicas: 3
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+    disruptionBudget:
+      enabled: true
+    resources:
+      requests:
+        cpu: 200m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+  profile-worker:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+
+web:
+  replicas: 2
+
+ingress:
+  host: avatars.example.com
+  tls:
+    enabled: true
+    secretName: gophprofile-tls
+
+networkPolicy:
+  depsPorts: []
+  extraEgress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 5432
+          protocol: TCP
+        - port: 9092
+          protocol: TCP
+        - port: 5672
+          protocol: TCP
+        - port: 4317
+          protocol: TCP

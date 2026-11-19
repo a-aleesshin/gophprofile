@@ -1,0 +1,31 @@
+{{- range $component, $workload := .Values.workloads }}
+{{- if (dig "autoscaling" "enabled" false $workload) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "gophprofile.componentName" (dict "root" $ "component" $component) }}
+  minReplicas: {{ $workload.autoscaling.minReplicas }}
+  maxReplicas: {{ $workload.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $workload.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: {{ dig "autoscaling" "scaleUpStabilizationSeconds" 0 $workload }}
+    scaleDown:
+      stabilizationWindowSeconds: {{ dig "autoscaling" "scaleDownStabilizationSeconds" 300 $workload }}
+{{- end }}
+{{- end }}

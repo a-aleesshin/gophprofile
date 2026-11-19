@@ -4,23 +4,46 @@ dotenv: ['.env']
 
 vars:
   GO: '{{.GO | default "go"}}'
+  IMAGE_TAG:
+    sh: echo "$(git rev-parse --short HEAD)$(git diff --quiet HEAD || echo "-dirty.$(date +%s)")"
 
 tasks:
   env:
-    desc: Create .env from the example with freshly generated secrets
+    desc: Create .env and the local chart values from the examples
     silent: true
+    vars:
+      VALUES: deploy/helm/gophprofile/values-local.yaml
     cmds:
       - |
         if [ -f .env ]; then
           echo ".env already exists, leaving it alone"
+        else
+          sed -e "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" \
+              -e "s|^GRPC_TOKEN=.*|GRPC_TOKEN=$(openssl rand -hex 32)|" \
+              -e "s|^IDENTITY_SECRET=.*|IDENTITY_SECRET=$(openssl rand -hex 32)|" \
+              -e "s|^IDENTITY_LOGIN_SECRET=.*|IDENTITY_LOGIN_SECRET=$(openssl rand -hex 32)|" \
+              .env.example > .env
+
+          echo ".env created, secrets generated"
+        fi
+
+        if [ -f {{.VALUES}} ]; then
+          echo "{{.VALUES}} already exists, leaving it alone"
           exit 0
         fi
 
-        sed -e "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" \
-            -e "s|^GRPC_TOKEN=.*|GRPC_TOKEN=$(openssl rand -hex 32)|" \
-            .env.example > .env
+        set -a
+        . ./.env
+        set +a
 
-        echo ".env created, LINK_SECRET and GRPC_TOKEN generated"
+        sed -e "s|postgres://USER:PASSWORD@file-db|postgres://file:file@file-db|" \
+            -e "s|postgres://USER:PASSWORD@profile-db|postgres://profile:profile@profile-db|" \
+            -e "s|S3_ACCESS_KEY: ACCESS_KEY|S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}|" \
+            -e "s|S3_SECRET_KEY: SECRET_KEY|S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}|" \
+            -e "s|amqp://USER:PASSWORD@rabbitmq|amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASSWORD:-guest}@rabbitmq|" \
+            {{.VALUES}}.example > {{.VALUES}}
+
+        echo "{{.VALUES}} created from the example"
 
   build:
     desc: Build every binary of the file service
@@ -90,3 +113,80 @@ tasks:
     desc: Show the state of every service
     cmds:
       - docker compose ps
+
+  k8s:images:
+    desc: Build the service images under an immutable tag
+    vars:
+      TAG: '{{.IMAGE_TAG}}'
+    cmds:
+      - docker build -f deploy/file.Dockerfile -t gophprofile/file:{{.TAG}} .
+      - docker build -f deploy/profile.Dockerfile -t gophprofile/profile:{{.TAG}} .
+      - docker build -f deploy/web.Dockerfile -t gophprofile/web:{{.TAG}} .
+
+  k8s:deps:
+    desc: Apply the databases, storage and brokers the chart expects
+    cmds:
+      - kubectl apply -f deploy/k8s/deps
+
+  k8s:up:
+    desc: Build the images and install the chart into the cluster
+    deps: [k8s:images, k8s:deps]
+    vars:
+      TAG: '{{.IMAGE_TAG}}'
+    cmds:
+      - |
+        helm upgrade --install gophprofile deploy/helm/gophprofile \
+          --namespace gophprofile --create-namespace \
+          --values deploy/helm/gophprofile/values-local.yaml \
+          --set image.tag={{.TAG}} \
+          --set services.file.secretEnv.LINK_SECRET="$LINK_SECRET" \
+          --set services.file.secretEnv.GRPC_TOKEN="$GRPC_TOKEN" \
+          --set services.profile.secretEnv.FILE_TOKEN="$GRPC_TOKEN" \
+          --set services.profile.secretEnv.IDENTITY_SECRET="$IDENTITY_SECRET" \
+          --set services.profile.secretEnv.IDENTITY_LOGIN_SECRET="$IDENTITY_LOGIN_SECRET" \
+          --wait --timeout 5m
+
+  k8s:down:
+    desc: Uninstall the chart and keep the dependencies
+    cmds:
+      - helm uninstall gophprofile --namespace gophprofile
+
+  k8s:down:clean:
+    desc: Remove the chart, the dependencies and their volumes
+    cmds:
+      - helm uninstall gophprofile --namespace gophprofile --ignore-not-found
+      - kubectl delete namespace gophprofile
+
+  k8s:ps:
+    desc: Show the state of everything in the cluster namespace
+    cmds:
+      - kubectl --namespace gophprofile get pods,svc,jobs
+
+  k8s:cluster:
+    desc: Install the cluster add-ons the chart expects
+    cmds:
+      - helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+      - helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+      - helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      - helm repo update ingress-nginx metrics-server prometheus-community
+      - |
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+          --version 4.15.1 --namespace ingress-nginx --create-namespace \
+          --values deploy/k8s/cluster/ingress-nginx.yaml --wait --timeout 5m
+      - |
+        helm upgrade --install metrics-server metrics-server/metrics-server \
+          --namespace kube-system \
+          --values deploy/k8s/cluster/metrics-server.yaml --wait --timeout 5m
+      - |
+        helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+          --namespace monitoring --create-namespace \
+          --values deploy/k8s/cluster/kube-prometheus-stack.yaml --wait --timeout 10m
+      - |
+        kubectl create configmap jaeger-config --namespace monitoring \
+          --from-file=config.yaml=deploy/jaeger/config.yaml \
+          --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl apply -f deploy/k8s/cluster/jaeger.yaml
+      - kubectl rollout status deployment/jaeger --namespace monitoring --timeout 5m
+      - kubectl apply -f deploy/k8s/cluster/logging
+      - kubectl rollout status deployment/loki --namespace monitoring --timeout 5m
+      - kubectl rollout status daemonset/fluent-bit --namespace monitoring --timeout 5m

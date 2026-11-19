@@ -1,0 +1,14 @@
+{{- if .Values.monitoring.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-dashboards" (include "gophprofile.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+    {{ .Values.monitoring.dashboards.label }}: "1"
+data:
+{{- range $path, $_ := .Files.Glob "files/dashboards/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+{{- end }}

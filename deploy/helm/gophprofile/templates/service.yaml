@@ -1,0 +1,26 @@
+{{- range $component, $workload := .Values.workloads }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "gophprofile.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    gophprofile.io/service: {{ $workload.service }}
+spec:
+  {{- if $workload.headless }}
+  clusterIP: None
+  {{- else }}
+  type: ClusterIP
+  {{- end }}
+  selector:
+    {{- include "gophprofile.selectorLabels" (dict "root" $ "component" $component) | nindent 4 }}
+  ports:
+    {{- range $name, $port := $workload.ports }}
+    - name: {{ $name }}
+      port: {{ $port }}
+      targetPort: {{ $name }}
+      protocol: TCP
+    {{- end }}
+{{- end }}

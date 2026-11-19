@@ -1,0 +1,161 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: file-db
+  namespace: gophprofile
+  labels:
+    app.kubernetes.io/name: file-db
+    app.kubernetes.io/part-of: gophprofile-deps
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: file-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: file-db
+  namespace: gophprofile
+  labels:
+    app.kubernetes.io/name: file-db
+    app.kubernetes.io/part-of: gophprofile-deps
+spec:
+  serviceName: file-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: file-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: file-db
+        app.kubernetes.io/part-of: gophprofile-deps
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: file
+            - name: POSTGRES_USER
+              value: file
+            - name: POSTGRES_PASSWORD
+              value: file
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "file", "-d", "file"]
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "file", "-d", "file"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: profile-db
+  namespace: gophprofile
+  labels:
+    app.kubernetes.io/name: profile-db
+    app.kubernetes.io/part-of: gophprofile-deps
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: profile-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: profile-db
+  namespace: gophprofile
+  labels:
+    app.kubernetes.io/name: profile-db
+    app.kubernetes.io/part-of: gophprofile-deps
+spec:
+  serviceName: profile-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: profile-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: profile-db
+        app.kubernetes.io/part-of: gophprofile-deps
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: profile
+            - name: POSTGRES_USER
+              value: profile
+            - name: POSTGRES_PASSWORD
+              value: profile
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "profile", "-d", "profile"]
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "profile", "-d", "profile"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
